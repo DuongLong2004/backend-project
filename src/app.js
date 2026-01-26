@@ -82,12 +82,24 @@ const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:5000", // React frontend
+    origin: "http://localhost:3000", // React frontend
     credentials: true,               // cho phép gửi cookie / token
   })
 );
 
 app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.send("Backend is running 🚀");
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    status: "OK",
+    message: "Backend is alive 🚀",
+  });
+});
+
 
 /* ===================== ROUTES ===================== */
 
@@ -106,7 +118,7 @@ app.use(errorMiddleware);
 /* ===================== DB SYNC ===================== */
 
 sequelize
-  .sync({ alter: true })
+  .sync()
   .then(() => {
     console.log("✅ Database synced (alter)");
   })
