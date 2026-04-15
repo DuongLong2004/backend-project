@@ -13,20 +13,18 @@ jobs:
 
     steps:
       - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: ⚙️ Setup Node.js 20
-        uses: actions/setup-node@v4
+      - name: ⚙️ Setup Node.js 18
+        uses: actions/setup-node@v3
         with:
-          node-version: "20"
+          node-version: "18"
 
       - name: 📦 Install dependencies
-        working-directory: .
         run: npm ci
 
       - name: ✅ Run tests
-        working-directory: .
-        run: npm test -- --coverage --ci
+        run: npm test -- --forceExit
         env:
           NODE_ENV: test
           JWT_SECRET: test_secret_key_for_ci
@@ -35,5 +33,6 @@ jobs:
           DB_PORT: 3306
           DB_NAME: test_db
           DB_USER: root
-          DB_PASS: root
+          DB_PASSWORD: root
           PORT: 5000
+          CLIENT_URL: http://localhost:5173
