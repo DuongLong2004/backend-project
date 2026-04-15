@@ -1,173 +1,5 @@
 
 
-// const bcrypt = require("bcrypt");
-// const User = require("../models/User");
-// const { sendResponse } = require("../utils/response");
-
-// // REGISTER
-// exports.createUser = async (req, res) => {
-//   try {
-//     const { name, email, password, age } = req.body;
-
-//     if (!name || !email || !password) {
-//       return sendResponse(res, 400, "error", "Missing required fields");
-//     }
-
-//     const existedUser = await User.findOne({ where: { email } });
-//     if (existedUser) {
-//       return sendResponse(res, 400, "error", "Email already exists");
-//     }
-
-//     // 🔐 HASH PASSWORD
-//     const hashedPassword = await bcrypt.hash(password, 10);
-
-//     const user = await User.create({
-//       name,
-//       email,
-//       password: hashedPassword,
-//       age,
-//       role: "user",
-//     });
-
-//     return sendResponse(res, 201, "success", "Register successfully", {
-//       id: user.id,
-//       name: user.name,
-//       email: user.email,
-//       age: user.age,
-//     });
-//   } catch (err) {
-//     return sendResponse(res, 500, "error", err.message);
-//   }
-// };
-
-
-// // GET ALL USERS
-// exports.getUsers = async (req, res) => {
-//   try {
-//     const users = await User.findAll({
-//       attributes: ["id", "name", "email", "age"],
-//     });
-
-//     return sendResponse(
-//       res,
-//       200,
-//       "success",
-//       "Get users successfully",
-//       users
-//     );
-//   } catch (err) {
-//     return sendResponse(
-//       res,
-//       500,
-//       "error",
-//       err.message
-//     );
-//   }
-// };
-
-// // GET USER BY ID
-// exports.getUserById = async (req, res) => {
-//   try {
-//     const user = await User.findByPk(req.params.id, {
-//       attributes: ["id", "name", "email", "age"],
-//     });
-
-//     if (!user) {
-//       return sendResponse(
-//         res,
-//         404,
-//         "error",
-//         "User not found"
-//       );
-//     }
-
-//     return sendResponse(
-//       res,
-//       200,
-//       "success",
-//       "Get user successfully",
-//       user
-//     );
-//   } catch (err) {
-//     return sendResponse(
-//       res,
-//       500,
-//       "error",
-//       err.message
-//     );
-//   }
-// };
-
-// // UPDATE USER
-// exports.updateUser = async (req, res) => {
-//   try {
-//     const user = await User.findByPk(req.params.id);
-
-//     if (!user) {
-//       return sendResponse(
-//         res,
-//         404,
-//         "error",
-//         "User not found"
-//       );
-//     }
-
-//     await user.update(req.body);
-
-//     return sendResponse(
-//       res,
-//       200,
-//       "success",
-//       "Update user successfully",
-//       {
-//         id: user.id,
-//         name: user.name,
-//         email: user.email,
-//         age: user.age,
-//       }
-//     );
-//   } catch (err) {
-//     return sendResponse(
-//       res,
-//       500,
-//       "error",
-//       err.message
-//     );
-//   }
-// };
-
-// // DELETE USER
-// exports.deleteUser = async (req, res) => {
-//   try {
-//     const user = await User.findByPk(req.params.id);
-
-//     if (!user) {
-//       return sendResponse(
-//         res,
-//         404,
-//         "error",
-//         "User not found"
-//       );
-//     }
-
-//     await user.destroy();
-
-//     return sendResponse(
-//       res,
-//       200,
-//       "success",
-//       "Delete user successfully"
-//     );
-//   } catch (err) {
-//     return sendResponse(
-//       res,
-//       500,
-//       "error",
-//       err.message
-//     );
-//   }
-// };
-
 
 
 
@@ -286,3 +118,41 @@ exports.deleteUser = catchAsync(async (req, res, next) => {
     message: "Delete user successfully",
   });
 });
+
+
+/**
+ * CHANGE USER ROLE (ADMIN ONLY)
+ */
+exports.changeUserRole = catchAsync(async (req, res, next) => {
+  const { role } = req.body;
+
+  // ❗ chỉ cho 2 role hợp lệ
+  if (!["user", "admin"].includes(role)) {
+    return next(new AppError("Invalid role", 400));
+  }
+
+  const user = await User.findByPk(req.params.id);
+
+  if (!user) {
+    return next(new AppError("User not found", 404));
+  }
+
+  // ❌ không cho tự đổi role của chính mình (optional – rất nên có)
+  if (req.user.id === user.id) {
+    return next(new AppError("Cannot change your own role", 403));
+  }
+
+  user.role = role;
+  await user.save();
+
+  res.status(200).json({
+    status: "success",
+    message: "Change role successfully",
+    data: {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+    },
+  });
+});
+

@@ -1,0 +1,45 @@
+name: CI – Run Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: 🧪 Run 55 Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      # ─── 1. Checkout code ─────────────────────────────
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
+
+      # ─── 2. Setup Node.js ─────────────────────────────
+      - name: ⚙️ Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      # ─── 3. Install dependencies ──────────────────────
+      - name: 📦 Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      # ─── 4. Run tests with coverage ───────────────────
+      - name: ✅ Run tests
+        working-directory: backend
+        run: npm test -- --coverage --ci
+        env:
+          NODE_ENV: test
+          JWT_SECRET: test_secret_key_for_ci
+          JWT_REFRESH_SECRET: test_refresh_secret_key_for_ci
+          DB_HOST: localhost
+          DB_PORT: 3306
+          DB_NAME: test_db
+          DB_USER: root
+          DB_PASS: root
+          PORT: 5000
