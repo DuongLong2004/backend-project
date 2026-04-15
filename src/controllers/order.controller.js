@@ -1,309 +1,230 @@
+
+
+
+// const { Op } = require("sequelize");
+// const sequelize = require("../config/db");
 // const { Order, OrderItem, Product } = require("../models/index");
 // const { sendResponse } = require("../utils/response");
 // const AppError = require("../utils/AppError");
-// const asyncWrapper = require("../utils/asyncWrapper");
+// const catchAsync = require("../utils/catchAsync");
 
+// // ─────────────────────────────────────────────
+// // Helper: parse price string → number
+// // ─────────────────────────────────────────────
 // const parsePrice = (priceStr) => {
-//   return parseFloat(priceStr.replace(/[^0-9]/g, ""));
+//   if (typeof priceStr === "number") return priceStr;
+//   return parseFloat(String(priceStr).replace(/[^0-9.]/g, ""));
 // };
 
-// exports.createOrder = asyncWrapper(async (req, res, next) => {
+// // ─────────────────────────────────────────────
+// // POST /orders — Tạo đơn hàng
+// // ─────────────────────────────────────────────
+// exports.createOrder = catchAsync(async (req, res, next) => {
 //   const userId = req.user.id;
 //   const { items, shippingInfo, payMethod } = req.body;
 
 //   if (!items || items.length === 0) {
-//     throw new AppError("Order must have at least 1 item", 400);
+//     return next(new AppError("Order must have at least 1 item", 400));
 //   }
 
-//   let totalAmount = 0;
-//   const orderItemsData = [];
+//   // ✅ Dùng transaction để tránh race condition
+//   // Nếu bất kỳ bước nào lỗi → rollback toàn bộ
+//   const result = await sequelize.transaction(async (t) => {
+//     let totalAmount = 0;
+//     const orderItemsData = [];
 
-//   for (const item of items) {
-//     const product = await Product.findByPk(item.productId);
-//     if (!product) throw new AppError(`Product ${item.productId} not found`, 404);
-//     const unitPrice = parsePrice(product.price);
-//     totalAmount += unitPrice * item.quantity;
-//     orderItemsData.push({
-//       productId: product.id,
-//       quantity: item.quantity,
-//       price: unitPrice,
-//     });
-//   }
+//     for (const item of items) {
+//       // ✅ Lock row khi đọc stock — ngăn 2 request đọc cùng lúc
+//       const product = await Product.findByPk(item.productId, {
+//         lock: t.LOCK.UPDATE,
+//         transaction: t,
+//       });
 
-//   const order = await Order.create({
-//     userId,
-//     totalAmount,
-//     shippingName:    shippingInfo?.name,
-//     shippingPhone:   shippingInfo?.phone,
-//     shippingEmail:   shippingInfo?.email,
-//     shippingAddress: shippingInfo?.address,
-//     payMethod:       payMethod || "cod",
-//   });
+//       if (!product) {
+//         throw new AppError(`Product ${item.productId} not found`, 404);
+//       }
 
-//   const itemsWithOrderId = orderItemsData.map(i => ({ ...i, orderId: order.id }));
-//   await OrderItem.bulkCreate(itemsWithOrderId);
+//       if (product.stock < item.quantity) {
+//         throw new AppError(
+//           `Sản phẩm "${product.title}" chỉ còn ${product.stock} cái trong kho`,
+//           400
+//         );
+//       }
 
-//   return sendResponse(res, 201, "success", "Order created", {
-//     orderId: order.id,
-//     totalAmount,
-//   });
-// });
+//       const unitPrice = parsePrice(product.price);
+//       totalAmount += unitPrice * item.quantity;
+//       orderItemsData.push({
+//         productId: product.id,
+//         quantity:  item.quantity,
+//         price:     unitPrice,
+//       });
+//     }
 
-// exports.getMyOrders = asyncWrapper(async (req, res, next) => {
-//   const userId = req.user.id;
-//   const orders = await Order.findAll({
-//     where: { userId },
-//     attributes: ["id", "status", "totalAmount", "createdAt",
-//       "shippingName", "shippingPhone", "shippingEmail",
-//       "shippingAddress", "payMethod"
-//     ],
-//     include: [{
-//       model: OrderItem,
-//       attributes: ["quantity", "price"],
-//       include: [{ model: Product, attributes: ["id", "title", "img", "price"] }]
-//     }],
-//     order: [["createdAt", "DESC"]],
-//   });
-//   return sendResponse(res, 200, "success", "OK", orders);
-// });
+//     // Tạo order
+//     const order = await Order.create({
+//       userId,
+//       totalAmount,
+//       shippingName:    shippingInfo?.name,
+//       shippingPhone:   shippingInfo?.phone,
+//       shippingEmail:   shippingInfo?.email,
+//       shippingAddress: shippingInfo?.address,
+//       payMethod:       payMethod || "cod",
+//     }, { transaction: t });
 
-// exports.getOrderById = asyncWrapper(async (req, res, next) => {
-//   const userId = req.user.id;
-//   const order = await Order.findOne({
-//     where: { id: req.params.id },
-//     attributes: ["id", "userId", "status", "totalAmount", "createdAt",
-//       "shippingName", "shippingPhone", "shippingEmail",
-//       "shippingAddress", "payMethod"
-//     ],
-//     include: [{
-//       model: OrderItem,
-//       attributes: ["quantity", "price"],
-//       include: [{ model: Product, attributes: ["id", "title", "img", "price"] }]
-//     }],
-//   });
+//     // Tạo order items
+//     const itemsWithOrderId = orderItemsData.map((i) => ({
+//       ...i,
+//       orderId: order.id,
+//     }));
+//     await OrderItem.bulkCreate(itemsWithOrderId, { transaction: t });
 
-//   if (!order) throw new AppError("Order not found", 404);
-//   if (order.userId !== userId && req.user.role !== "admin") {
-//     throw new AppError("Forbidden", 403);
-//   }
-
-//   return sendResponse(res, 200, "success", "OK", order);
-// });
-
-// exports.cancelOrder = asyncWrapper(async (req, res, next) => {
-//   const userId = req.user.id;
-//   const order = await Order.findByPk(req.params.id);
-
-//   if (!order) throw new AppError("Order not found", 404);
-//   if (order.userId !== userId) throw new AppError("Forbidden", 403);
-//   if (order.status === "completed") throw new AppError("Cannot cancel a completed order", 400);
-//   if (order.status === "cancelled") throw new AppError("Order already cancelled", 400);
-
-//   await order.update({ status: "cancelled" });
-//   return sendResponse(res, 200, "success", "Order cancelled");
-// });
-
-// // GET /orders – Admin xem tất cả ✅ có shipping info
-// exports.getAllOrders = asyncWrapper(async (req, res, next) => {
-//   const orders = await Order.findAll({
-//     attributes: [
-//       "id", "userId", "status", "totalAmount", "createdAt",
-//       "shippingName", "shippingPhone", "shippingEmail", // ✅
-//       "shippingAddress", "payMethod"                    // ✅
-//     ],
-//     include: [{
-//       model: OrderItem,
-//       attributes: ["quantity", "price"],
-//       include: [{ model: Product, attributes: ["id", "title", "img"] }]
-//     }],
-//     order: [["createdAt", "DESC"]],
-//   });
-//   return sendResponse(res, 200, "success", "OK", orders);
-// });
-
-// // PATCH /orders/:id/status – Admin cập nhật status
-// exports.updateOrderStatus = asyncWrapper(async (req, res, next) => {
-//   const { status } = req.body;
-//   const validStatuses = ["pending", "confirmed", "completed", "cancelled"];
-
-//   if (!validStatuses.includes(status)) {
-//     throw new AppError("Invalid status", 400);
-//   }
-
-//   const order = await Order.findByPk(req.params.id);
-//   if (!order) throw new AppError("Order not found", 404);
-
-//   await order.update({ status });
-//   return sendResponse(res, 200, "success", "Order status updated", { id: order.id, status });
-// });
-
-
-// const { Order, OrderItem, Product } = require("../models/index");
-// const { sendResponse } = require("../utils/response");
-// const AppError = require("../utils/AppError");
-// const asyncWrapper = require("../utils/asyncWrapper");
-
-// const parsePrice = (priceStr) => {
-//   return parseFloat(priceStr.replace(/[^0-9]/g, ""));
-// };
-
-// exports.createOrder = asyncWrapper(async (req, res, next) => {
-//   const userId = req.user.id;
-//   const { items, shippingInfo, payMethod } = req.body;
-
-//   if (!items || items.length === 0) {
-//     throw new AppError("Order must have at least 1 item", 400);
-//   }
-
-//   let totalAmount = 0;
-//   const orderItemsData = [];
-
-//   // ✅ Kiểm tra stock trước khi tạo order
-//   for (const item of items) {
-//     const product = await Product.findByPk(item.productId);
-//     if (!product) throw new AppError(`Product ${item.productId} not found`, 404);
-
-//     // ✅ Kiểm tra còn hàng không
-//     if (product.stock < item.quantity) {
-//       throw new AppError(
-//         `Sản phẩm "${product.title}" chỉ còn ${product.stock} cái trong kho!`, 400
+//     // ✅ Trừ stock + tăng sold — nằm trong cùng transaction
+//     for (const item of items) {
+//       await Product.increment(
+//         { stock: -item.quantity, sold: item.quantity },
+//         { where: { id: item.productId }, transaction: t }
 //       );
 //     }
 
-//     const unitPrice = parsePrice(product.price);
-//     totalAmount += unitPrice * item.quantity;
-//     orderItemsData.push({
-//       productId: product.id,
-//       quantity:  item.quantity,
-//       price:     unitPrice,
-//     });
-//   }
-
-//   const order = await Order.create({
-//     userId,
-//     totalAmount,
-//     shippingName:    shippingInfo?.name,
-//     shippingPhone:   shippingInfo?.phone,
-//     shippingEmail:   shippingInfo?.email,
-//     shippingAddress: shippingInfo?.address,
-//     payMethod:       payMethod || "cod",
+//     return order;
 //   });
 
-//   const itemsWithOrderId = orderItemsData.map(i => ({ ...i, orderId: order.id }));
-//   await OrderItem.bulkCreate(itemsWithOrderId);
-
-//   // ✅ Trừ stock + tăng sold sau khi tạo order thành công
-//   for (const item of items) {
-//     await Product.increment(
-//       { stock: -item.quantity, sold: item.quantity },
-//       { where: { id: item.productId } }
-//     );
-//   }
-
 //   return sendResponse(res, 201, "success", "Order created", {
-//     orderId: order.id,
-//     totalAmount,
+//     orderId:     result.id,
+//     totalAmount: result.totalAmount,
 //   });
 // });
 
-// exports.getMyOrders = asyncWrapper(async (req, res, next) => {
-//   const userId = req.user.id;
+// // ─────────────────────────────────────────────
+// // GET /orders/me — User xem đơn của mình
+// // ─────────────────────────────────────────────
+// exports.getMyOrders = catchAsync(async (req, res, next) => {
 //   const orders = await Order.findAll({
-//     where: { userId },
-//     attributes: ["id", "status", "totalAmount", "createdAt",
+//     where: { userId: req.user.id },
+//     attributes: [
+//       "id", "status", "totalAmount", "createdAt",
 //       "shippingName", "shippingPhone", "shippingEmail",
-//       "shippingAddress", "payMethod"
+//       "shippingAddress", "payMethod",
 //     ],
 //     include: [{
 //       model: OrderItem,
 //       attributes: ["quantity", "price"],
-//       include: [{ model: Product, attributes: ["id", "title", "img", "price"] }]
+//       include: [{ model: Product, attributes: ["id", "title", "img", "price"] }],
 //     }],
 //     order: [["createdAt", "DESC"]],
 //   });
+
 //   return sendResponse(res, 200, "success", "OK", orders);
 // });
 
-// exports.getOrderById = asyncWrapper(async (req, res, next) => {
-//   const userId = req.user.id;
+// // ─────────────────────────────────────────────
+// // GET /orders/:id — Xem chi tiết 1 đơn
+// // ─────────────────────────────────────────────
+// exports.getOrderById = catchAsync(async (req, res, next) => {
 //   const order = await Order.findOne({
 //     where: { id: req.params.id },
-//     attributes: ["id", "userId", "status", "totalAmount", "createdAt",
+//     attributes: [
+//       "id", "userId", "status", "totalAmount", "createdAt",
 //       "shippingName", "shippingPhone", "shippingEmail",
-//       "shippingAddress", "payMethod"
+//       "shippingAddress", "payMethod",
 //     ],
 //     include: [{
 //       model: OrderItem,
 //       attributes: ["quantity", "price"],
-//       include: [{ model: Product, attributes: ["id", "title", "img", "price"] }]
+//       include: [{ model: Product, attributes: ["id", "title", "img", "price"] }],
 //     }],
 //   });
 
-//   if (!order) throw new AppError("Order not found", 404);
-//   if (order.userId !== userId && req.user.role !== "admin") {
-//     throw new AppError("Forbidden", 403);
+//   if (!order) return next(new AppError("Order not found", 404));
+
+//   // ✅ User chỉ xem được đơn của mình, admin xem được tất cả
+//   if (order.userId !== req.user.id && req.user.role !== "admin") {
+//     return next(new AppError("Forbidden", 403));
 //   }
 
 //   return sendResponse(res, 200, "success", "OK", order);
 // });
 
-// exports.cancelOrder = asyncWrapper(async (req, res, next) => {
-//   const userId = req.user.id;
-//   const order  = await Order.findByPk(req.params.id, {
-//     include: [{ model: OrderItem }]
+// // ─────────────────────────────────────────────
+// // PATCH /orders/:id/cancel — User huỷ đơn
+// // ─────────────────────────────────────────────
+// exports.cancelOrder = catchAsync(async (req, res, next) => {
+//   const order = await Order.findByPk(req.params.id, {
+//     include: [{ model: OrderItem }],
 //   });
 
-//   if (!order) throw new AppError("Order not found", 404);
-//   if (order.userId !== userId) throw new AppError("Forbidden", 403);
-//   if (order.status === "completed") throw new AppError("Cannot cancel a completed order", 400);
-//   if (order.status === "cancelled") throw new AppError("Order already cancelled", 400);
+//   if (!order) return next(new AppError("Order not found", 404));
+//   if (order.userId !== req.user.id) return next(new AppError("Forbidden", 403));
+//   if (order.status === "completed")  return next(new AppError("Cannot cancel a completed order", 400));
+//   if (order.status === "cancelled")  return next(new AppError("Order already cancelled", 400));
 
-//   await order.update({ status: "cancelled" });
+//   // ✅ Hoàn stock trong transaction
+//   await sequelize.transaction(async (t) => {
+//     await order.update({ status: "cancelled" }, { transaction: t });
 
-//   // ✅ Hoàn lại stock khi huỷ đơn
-//   for (const item of order.OrderItems) {
-//     await Product.increment(
-//       { stock: item.quantity, sold: -item.quantity },
-//       { where: { id: item.productId } }
-//     );
-//   }
+//     for (const item of order.OrderItems) {
+//       await Product.increment(
+//         { stock: item.quantity, sold: -item.quantity },
+//         { where: { id: item.productId }, transaction: t }
+//       );
+//     }
+//   });
 
 //   return sendResponse(res, 200, "success", "Order cancelled");
 // });
 
-// // GET /orders – Admin xem tất cả
-// exports.getAllOrders = asyncWrapper(async (req, res, next) => {
+// // ─────────────────────────────────────────────
+// // GET /orders — Admin xem tất cả đơn
+// // ─────────────────────────────────────────────
+// exports.getAllOrders = catchAsync(async (req, res, next) => {
 //   const orders = await Order.findAll({
 //     attributes: [
 //       "id", "userId", "status", "totalAmount", "createdAt",
 //       "shippingName", "shippingPhone", "shippingEmail",
-//       "shippingAddress", "payMethod"
+//       "shippingAddress", "payMethod",
 //     ],
 //     include: [{
 //       model: OrderItem,
 //       attributes: ["quantity", "price"],
-//       include: [{ model: Product, attributes: ["id", "title", "img"] }]
+//       include: [{ model: Product, attributes: ["id", "title", "img"] }],
 //     }],
 //     order: [["createdAt", "DESC"]],
 //   });
+
 //   return sendResponse(res, 200, "success", "OK", orders);
 // });
 
-// // PATCH /orders/:id/status – Admin cập nhật status
-// exports.updateOrderStatus = asyncWrapper(async (req, res, next) => {
+// // ─────────────────────────────────────────────
+// // PATCH /orders/:id/status — Admin cập nhật trạng thái
+// // ─────────────────────────────────────────────
+// exports.updateOrderStatus = catchAsync(async (req, res, next) => {
 //   const { status } = req.body;
 //   const validStatuses = ["pending", "confirmed", "completed", "cancelled"];
 
 //   if (!validStatuses.includes(status)) {
-//     throw new AppError("Invalid status", 400);
+//     return next(new AppError("Invalid status", 400));
 //   }
 
 //   const order = await Order.findByPk(req.params.id);
-//   if (!order) throw new AppError("Order not found", 404);
+//   if (!order) return next(new AppError("Order not found", 404));
+
+//   // ✅ Không cho phép chuyển ngược trạng thái (completed → pending)
+//   const statusFlow = { pending: 0, confirmed: 1, completed: 2, cancelled: 3 };
+//   if (
+//     order.status === "completed" ||
+//     order.status === "cancelled"
+//   ) {
+//     return next(new AppError(`Cannot change status from "${order.status}"`, 400));
+//   }
 
 //   await order.update({ status });
-//   return sendResponse(res, 200, "success", "Order status updated", { id: order.id, status });
+
+//   return sendResponse(res, 200, "success", "Order status updated", {
+//     id:     order.id,
+//     status: order.status,
+//   });
 // });
+
 
 
 const { Op } = require("sequelize");
@@ -333,7 +254,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
   }
 
   // ✅ Dùng transaction để tránh race condition
-  // Nếu bất kỳ bước nào lỗi → rollback toàn bộ
   const result = await sequelize.transaction(async (t) => {
     let totalAmount = 0;
     const orderItemsData = [];
@@ -365,7 +285,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
       });
     }
 
-    // Tạo order
     const order = await Order.create({
       userId,
       totalAmount,
@@ -376,7 +295,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
       payMethod:       payMethod || "cod",
     }, { transaction: t });
 
-    // Tạo order items
     const itemsWithOrderId = orderItemsData.map((i) => ({
       ...i,
       orderId: order.id,
@@ -402,10 +320,29 @@ exports.createOrder = catchAsync(async (req, res, next) => {
 
 // ─────────────────────────────────────────────
 // GET /orders/me — User xem đơn của mình
+// ✅ Cursor-based pagination — phù hợp cho infinite scroll
+// Dùng createdAt làm cursor thay vì OFFSET
+// Tại sao không dùng offset: OFFSET lớn = MySQL scan nhiều rows = chậm
+// Cursor query: WHERE createdAt < cursor → luôn O(1) dù có bao nhiêu đơn
+//
+// Cách dùng:
+//   Lần đầu: GET /orders/me?limit=10
+//   Trang tiếp: GET /orders/me?cursor=<nextCursor>&limit=10
 // ─────────────────────────────────────────────
 exports.getMyOrders = catchAsync(async (req, res, next) => {
+  const limit  = parseInt(req.query.limit)  || 10;
+  const cursor = req.query.cursor || null; // cursor = createdAt của item cuối
+
+  const where = { userId: req.user.id };
+
+  // ✅ Nếu có cursor → chỉ lấy orders cũ hơn cursor đó
+  if (cursor) {
+    where.createdAt = { [Op.lt]: new Date(parseInt(cursor)) };
+  }
+
+  // ✅ Lấy thêm 1 item để biết còn trang tiếp không
   const orders = await Order.findAll({
-    where: { userId: req.user.id },
+    where,
     attributes: [
       "id", "status", "totalAmount", "createdAt",
       "shippingName", "shippingPhone", "shippingEmail",
@@ -417,9 +354,23 @@ exports.getMyOrders = catchAsync(async (req, res, next) => {
       include: [{ model: Product, attributes: ["id", "title", "img", "price"] }],
     }],
     order: [["createdAt", "DESC"]],
+    limit: limit + 1, // lấy thêm 1 để check hasMore
   });
 
-  return sendResponse(res, 200, "success", "OK", orders);
+  // ✅ Kiểm tra còn trang tiếp không
+  const hasMore = orders.length > limit;
+  const data    = hasMore ? orders.slice(0, -1) : orders;
+
+  // ✅ nextCursor = timestamp của item cuối cùng
+  const nextCursor = hasMore
+    ? data[data.length - 1].createdAt.getTime().toString()
+    : null;
+
+  return sendResponse(res, 200, "success", "OK", {
+    data,
+    hasMore,
+    nextCursor, // Client dùng cursor này để load trang tiếp
+  });
 });
 
 // ─────────────────────────────────────────────
@@ -513,8 +464,6 @@ exports.updateOrderStatus = catchAsync(async (req, res, next) => {
   const order = await Order.findByPk(req.params.id);
   if (!order) return next(new AppError("Order not found", 404));
 
-  // ✅ Không cho phép chuyển ngược trạng thái (completed → pending)
-  const statusFlow = { pending: 0, confirmed: 1, completed: 2, cancelled: 3 };
   if (
     order.status === "completed" ||
     order.status === "cancelled"
