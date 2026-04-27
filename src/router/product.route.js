@@ -1,182 +1,4 @@
-// const express   = require("express");
-// const router    = express.Router();
-// const { Product, ProductSpec } = require("../models/index"); // ✅ thêm ProductSpec
-// const { sendResponse } = require("../utils/response");
-// const { Op }    = require("sequelize");
-// const { verifyToken } = require("../middlewares/auth.middleware");
-// const checkRole = require("../middlewares/checkRole");
 
-// const parsePrice = (priceStr) => {
-//   return parseFloat(priceStr.replace(/[^0-9]/g, ""));
-// };
-
-// // ✅ GET /api/products – Danh sách sản phẩm
-// router.get("/", async (req, res) => {
-//   try {
-//     const page   = parseInt(req.query.page)  || 1;
-//     const limit  = parseInt(req.query.limit) || 10;
-//     const offset = (page - 1) * limit;
-//     const { search, brand, category, minPrice, maxPrice } = req.query;
-
-//     const where = {};
-//     if (search)   where.title    = { [Op.like]: `%${search}%` };
-//     if (brand)    where.brand    = brand;
-//     if (category) where.category = category;
-
-//     let { count, rows } = await Product.findAndCountAll({
-//       where,
-//       order: [["createdAt", "DESC"]],
-//     });
-
-//     if (minPrice || maxPrice) {
-//       rows = rows.filter((p) => {
-//         const price = parsePrice(p.price);
-//         if (minPrice && price < parseFloat(minPrice)) return false;
-//         if (maxPrice && price > parseFloat(maxPrice)) return false;
-//         return true;
-//       });
-//       count = rows.length;
-//     }
-
-//     const paginated = rows.slice(offset, offset + limit);
-//     return sendResponse(res, 200, "success", "OK", {
-//       data: paginated,
-//       meta: { total: count, page, limit, totalPages: Math.ceil(count / limit) },
-//     });
-//   } catch (err) {
-//     return sendResponse(res, 500, "error", err.message);
-//   }
-// });
-
-// // ✅ GET /api/products/:id – Chi tiết sản phẩm + specs
-// router.get("/:id", async (req, res) => {
-//   try {
-//     const product = await Product.findByPk(req.params.id, {
-//       include: [{
-//         model: ProductSpec,
-//         as: "specs",
-//         attributes: ["specKey", "specValue", "sortOrder"],
-//       }],
-//       order: [[{ model: ProductSpec, as: "specs" }, "sortOrder", "ASC"]],
-//     });
-//     if (!product) return sendResponse(res, 404, "error", "Product not found");
-//     return sendResponse(res, 200, "success", "OK", product);
-//   } catch (err) {
-//     return sendResponse(res, 500, "error", err.message);
-//   }
-// });
-
-// // ✅ POST /api/products – Admin thêm sản phẩm mới
-// router.post("/", verifyToken, checkRole("admin"), async (req, res) => {
-//   try {
-//     const {
-//       brand, title, img, discount, price, oldPrice,
-//       category, nation, display, screenTech, ram, rom,
-//       chip, camera, battery, charging, description,
-//       stock, sold
-//     } = req.body;
-
-//     if (!brand || !title || !price || !category) {
-//       return sendResponse(res, 400, "error", "Thiếu thông tin bắt buộc: brand, title, price, category");
-//     }
-
-//     const product = await Product.create({
-//       brand, title, img, discount, price, oldPrice,
-//       category, nation, display, screenTech, ram, rom,
-//       chip, camera, battery, charging, description,
-//       stock: stock || 50,
-//       sold:  sold  || 0,
-//     });
-
-//     // ✅ Tạo specs cho sản phẩm mới
-//     const specsData = [
-//       { specKey: "display",    specValue: display,    sortOrder: 1 },
-//       { specKey: "screenTech", specValue: screenTech, sortOrder: 2 },
-//       { specKey: "ram",        specValue: ram,        sortOrder: 3 },
-//       { specKey: "rom",        specValue: rom,        sortOrder: 4 },
-//       { specKey: "chip",       specValue: chip,       sortOrder: 5 },
-//       { specKey: "camera",     specValue: camera,     sortOrder: 6 },
-//       { specKey: "battery",    specValue: battery,    sortOrder: 7 },
-//       { specKey: "charging",   specValue: charging,   sortOrder: 8 },
-//       { specKey: "nation",     specValue: nation,     sortOrder: 9 },
-//     ].filter(s => s.specValue);
-
-//     if (specsData.length > 0) {
-//       await ProductSpec.bulkCreate(
-//         specsData.map(s => ({ ...s, productId: product.id }))
-//       );
-//     }
-
-//     return sendResponse(res, 201, "success", "Thêm sản phẩm thành công!", product);
-//   } catch (err) {
-//     return sendResponse(res, 500, "error", err.message);
-//   }
-// });
-
-// // ✅ PUT /api/products/:id – Admin cập nhật sản phẩm
-// router.put("/:id", verifyToken, checkRole("admin"), async (req, res) => {
-//   try {
-//     const product = await Product.findByPk(req.params.id);
-//     if (!product) return sendResponse(res, 404, "error", "Product not found");
-
-//     const {
-//       brand, title, img, discount, price, oldPrice,
-//       category, nation, display, screenTech, ram, rom,
-//       chip, camera, battery, charging, description,
-//       stock, sold
-//     } = req.body;
-
-//     await product.update({
-//       brand, title, img, discount, price, oldPrice,
-//       category, nation, display, screenTech, ram, rom,
-//       chip, camera, battery, charging, description,
-//       stock, sold
-//     });
-
-//     // ✅ Cập nhật specs
-//     await ProductSpec.destroy({ where: { productId: product.id } });
-
-//     const specsData = [
-//       { specKey: "display",    specValue: display,    sortOrder: 1 },
-//       { specKey: "screenTech", specValue: screenTech, sortOrder: 2 },
-//       { specKey: "ram",        specValue: ram,        sortOrder: 3 },
-//       { specKey: "rom",        specValue: rom,        sortOrder: 4 },
-//       { specKey: "chip",       specValue: chip,       sortOrder: 5 },
-//       { specKey: "camera",     specValue: camera,     sortOrder: 6 },
-//       { specKey: "battery",    specValue: battery,    sortOrder: 7 },
-//       { specKey: "charging",   specValue: charging,   sortOrder: 8 },
-//       { specKey: "nation",     specValue: nation,     sortOrder: 9 },
-//     ].filter(s => s.specValue);
-
-//     if (specsData.length > 0) {
-//       await ProductSpec.bulkCreate(
-//         specsData.map(s => ({ ...s, productId: product.id }))
-//       );
-//     }
-
-//     return sendResponse(res, 200, "success", "Cập nhật sản phẩm thành công!", product);
-//   } catch (err) {
-//     return sendResponse(res, 500, "error", err.message);
-//   }
-// });
-
-// // ✅ DELETE /api/products/:id – Admin xóa sản phẩm
-// router.delete("/:id", verifyToken, checkRole("admin"), async (req, res) => {
-//   try {
-//     const product = await Product.findByPk(req.params.id);
-//     if (!product) return sendResponse(res, 404, "error", "Product not found");
-
-//     // ✅ Xóa specs trước (FK cascade)
-//     await ProductSpec.destroy({ where: { productId: product.id } });
-//     await product.destroy();
-
-//     return sendResponse(res, 200, "success", "Xóa sản phẩm thành công!");
-//   } catch (err) {
-//     return sendResponse(res, 500, "error", err.message);
-//   }
-// });
-
-// module.exports = router;
 
 
 const express    = require("express");
@@ -190,22 +12,87 @@ const { verifyToken }   = require("../middlewares/auth.middleware");
 const checkRole         = require("../middlewares/checkRole");
 
 // ─────────────────────────────────────────────
+// Helper: parse comma-separated string → array
+// ─────────────────────────────────────────────
+const parseArray = (val) => {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean);
+  return val.split(",").map(s => s.trim()).filter(Boolean);
+};
+
+// ─────────────────────────────────────────────
+// ✅ THÊM MỚI: danh sách status hợp lệ
+// Dùng chung ở GET, POST, PUT — tránh lặp code
+// ─────────────────────────────────────────────
+const VALID_STATUSES = ["active", "draft", "outofstock"];
+
+// ─────────────────────────────────────────────
 // GET /api/products
 // ─────────────────────────────────────────────
 router.get("/", catchAsync(async (req, res, next) => {
   const page   = parseInt(req.query.page)  || 1;
   const limit  = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
-  const { search, brand, category, minPrice, maxPrice } = req.query;
+
+  const {
+    search, brand, category,
+    minPrice, maxPrice,
+    ram, rom, chip, camera, battery, display,
+    // ✅ THÊM MỚI: nhận thêm param status từ query string
+    // ListProduct gọi: GET /products?status=active  → chỉ trả active
+    // Admin gọi:       GET /products                → không truyền → trả tất cả
+    status,
+  } = req.query;
 
   const where = {};
-  if (search)   where.title    = { [Op.like]: `%${search}%` };
-  if (brand)    where.brand    = brand;
+
+  // ── Text search ──────────────────────────────
+  if (search) where.title = { [Op.like]: `%${search}%` };
+
+  // ── Category ────────────────────────────────
   if (category) where.category = category;
 
-  // ✅ Filter giá bằng SQL thay vì filter sau khi query — hiệu quả hơn
-  if (minPrice) where.price = { ...where.price, [Op.gte]: parseFloat(minPrice) };
-  if (maxPrice) where.price = { ...where.price, [Op.lte]: parseFloat(maxPrice) };
+  // ── Brand ────────────────────────────────────
+  const brands = parseArray(brand);
+  if (brands.length === 1) where.brand = brands[0];
+  if (brands.length  > 1) where.brand = { [Op.in]: brands };
+
+  // Dùng !== undefined thay vì if (minPrice)
+  // vì minPrice=0 là giá trị hợp lệ nhưng if (0) = false
+  if (minPrice !== undefined && minPrice !== "") {
+    where.price = { ...where.price, [Op.gte]: parseFloat(minPrice) };
+  }
+  if (maxPrice !== undefined && maxPrice !== "") {
+    where.price = { ...where.price, [Op.lte]: parseFloat(maxPrice) };
+  }
+
+  // ── Spec filters ─────────────────────────────
+  const addSpecFilter = (field, rawVal) => {
+    const vals = parseArray(rawVal);
+    if (!vals.length) return;
+    if (vals.length === 1) {
+      where[field] = { [Op.like]: `%${vals[0]}%` };
+    } else {
+      where[field] = { [Op.or]: vals.map(v => ({ [Op.like]: `%${v}%` })) };
+    }
+  };
+
+  addSpecFilter("ram",     ram);
+  addSpecFilter("rom",     rom);
+  addSpecFilter("chip",    chip);
+  addSpecFilter("camera",  camera);
+  addSpecFilter("battery", battery);
+  addSpecFilter("display", display);
+
+  // ✅ THÊM MỚI: filter theo status
+  // - Nếu client truyền status hợp lệ → lọc đúng status đó
+  //   VD: ?status=active   → ListProduct chỉ thấy sản phẩm đang bán
+  //       ?status=draft     → Admin xem bản nháp
+  // - Nếu không truyền status (hoặc truyền sai) → không lọc → trả tất cả
+  //   VD: Admin gọi GET /products không có status → thấy hết
+  if (status && VALID_STATUSES.includes(status)) {
+    where.status = status;
+  }
 
   const { count, rows } = await Product.findAndCountAll({
     where,
@@ -227,6 +114,7 @@ router.get("/", catchAsync(async (req, res, next) => {
 
 // ─────────────────────────────────────────────
 // GET /api/products/:id
+// Giữ nguyên — không thay đổi
 // ─────────────────────────────────────────────
 router.get("/:id", catchAsync(async (req, res, next) => {
   const product = await Product.findByPk(req.params.id, {
@@ -251,11 +139,16 @@ router.post("/", verifyToken, checkRole("admin"), catchAsync(async (req, res, ne
     brand, title, img, discount, price, oldPrice,
     category, nation, display, screenTech, ram, rom,
     chip, camera, battery, charging, description, stock, sold,
+    // ✅ THÊM MỚI: nhận status từ body
+    status,
   } = req.body;
 
   if (!brand || !title || !price || !category) {
     return next(new AppError("Thiếu thông tin bắt buộc: brand, title, price, category", 400));
   }
+
+  // ✅ THÊM MỚI: validate status — nếu không hợp lệ thì dùng "active"
+  const productStatus = VALID_STATUSES.includes(status) ? status : "active";
 
   const product = await Product.create({
     brand, title, img, discount, price, oldPrice,
@@ -263,6 +156,8 @@ router.post("/", verifyToken, checkRole("admin"), catchAsync(async (req, res, ne
     chip, camera, battery, charging, description,
     stock: stock || 50,
     sold:  sold  || 0,
+    // ✅ THÊM MỚI
+    status: productStatus,
   });
 
   const specsData = buildSpecs({ display, screenTech, ram, rom, chip, camera, battery, charging, nation });
@@ -284,15 +179,22 @@ router.put("/:id", verifyToken, checkRole("admin"), catchAsync(async (req, res, 
     brand, title, img, discount, price, oldPrice,
     category, nation, display, screenTech, ram, rom,
     chip, camera, battery, charging, description, stock, sold,
+    // ✅ THÊM MỚI: nhận status từ body
+    status,
   } = req.body;
 
   await product.update({
     brand, title, img, discount, price, oldPrice,
     category, nation, display, screenTech, ram, rom,
     chip, camera, battery, charging, description, stock, sold,
+    // ✅ THÊM MỚI: chỉ update status nếu hợp lệ
+    // Nếu body không gửi status (undefined) → giữ nguyên status cũ trong DB
+    // Nếu gửi status hợp lệ → cập nhật
+    // Spread conditional để không ghi đè bằng undefined
+    ...(VALID_STATUSES.includes(status) && { status }),
   });
 
-  // ✅ Xóa specs cũ rồi tạo lại
+  // Giữ nguyên logic specs — không thay đổi
   await ProductSpec.destroy({ where: { productId: product.id } });
   const specsData = buildSpecs({ display, screenTech, ram, rom, chip, camera, battery, charging, nation });
   if (specsData.length > 0) {
@@ -304,6 +206,7 @@ router.put("/:id", verifyToken, checkRole("admin"), catchAsync(async (req, res, 
 
 // ─────────────────────────────────────────────
 // DELETE /api/products/:id — Admin
+// Giữ nguyên — không thay đổi
 // ─────────────────────────────────────────────
 router.delete("/:id", verifyToken, checkRole("admin"), catchAsync(async (req, res, next) => {
   const product = await Product.findByPk(req.params.id);
@@ -317,6 +220,7 @@ router.delete("/:id", verifyToken, checkRole("admin"), catchAsync(async (req, re
 
 // ─────────────────────────────────────────────
 // Helper: build specs array
+// Giữ nguyên — không thay đổi
 // ─────────────────────────────────────────────
 const buildSpecs = ({ display, screenTech, ram, rom, chip, camera, battery, charging, nation }) =>
   [
