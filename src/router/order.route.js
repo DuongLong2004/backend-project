@@ -1,13 +1,10 @@
-
-
-
-
-
 const express = require("express");
 const router = express.Router();
 const orderController = require("../controllers/order.controller");
 const { verifyToken } = require("../middlewares/auth.middleware");
-const checkRole = require("../middlewares/checkRole"); // ✅ thêm
+const checkRole = require("../middlewares/checkRole");
+const validate = require("../middlewares/validate.middleware");
+const { createOrderSchema } = require("../validations/user.validation");
 
 /**
  * @swagger
@@ -16,7 +13,7 @@ const checkRole = require("../middlewares/checkRole"); // ✅ thêm
  *   description: Order APIs – cần Bearer Token
  */
 
-// ✅ Admin xem tất cả orders – PHẢI đặt trước /:id
+//  Admin xem tất cả orders – PHẢI đặt trước /:id
 router.get("/", verifyToken, checkRole("admin"), orderController.getAllOrders);
 
 /**
@@ -45,15 +42,27 @@ router.get("/", verifyToken, checkRole("admin"), orderController.getAllOrders);
  *                     quantity:
  *                       type: integer
  *                       example: 2
+ *               shippingInfo:
+ *                 type: object
+ *                 properties:
+ *                   name:    { type: string, example: "Nguyen Van A" }
+ *                   phone:   { type: string, example: "0909123456" }
+ *                   email:   { type: string, example: "a@gmail.com" }
+ *                   address: { type: string, example: "123 Nguyen Hue" }
+ *               payMethod:
+ *                 type: string
+ *                 enum: [cod, banking, momo]
+ *                 example: cod
  *     responses:
  *       201:
  *         description: Tạo đơn thành công
  *       400:
- *         description: Items rỗng
+ *         description: Validation error
  *       404:
  *         description: Product không tồn tại
  */
-router.post("/", verifyToken, orderController.createOrder);
+//  Thêm validate(createOrderSchema) — sanitize XSS + validate input trước controller
+router.post("/", verifyToken, validate(createOrderSchema), orderController.createOrder);
 
 /**
  * @swagger
@@ -84,7 +93,6 @@ router.get("/me", verifyToken, orderController.getMyOrders);
  *         name: id
  *         required: true
  *         schema: { type: integer, example: 1 }
- *         description: ID đơn hàng
  *     responses:
  *       200:
  *         description: Chi tiết đơn hàng
@@ -108,7 +116,6 @@ router.get("/:id", verifyToken, orderController.getOrderById);
  *         name: id
  *         required: true
  *         schema: { type: integer, example: 1 }
- *         description: ID đơn hàng cần huỷ
  *     responses:
  *       200:
  *         description: Huỷ đơn thành công
@@ -121,8 +128,7 @@ router.get("/:id", verifyToken, orderController.getOrderById);
  */
 router.patch("/:id/cancel", verifyToken, orderController.cancelOrder);
 
-
-// ✅ Admin cập nhật status đơn hàng
+//  Admin cập nhật status đơn hàng
 router.patch("/:id/status", verifyToken, checkRole("admin"), orderController.updateOrderStatus);
 
 module.exports = router;
