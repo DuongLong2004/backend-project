@@ -2,6 +2,15 @@ const request = require("supertest");
 const bcrypt  = require("bcrypt");
 const jwt     = require("jsonwebtoken");
 
+// ✅ Mock Redis trước khi load app — tránh lỗi khi test không có Redis thật
+jest.mock("../../src/config/redis", () => ({
+  isReady: false,
+  get:   jest.fn().mockResolvedValue(null),
+  setEx: jest.fn().mockResolvedValue(true),
+  keys:  jest.fn().mockResolvedValue([]),
+  del:   jest.fn().mockResolvedValue(true),
+}));
+
 // ✅ Mock tất cả model trước khi load app
 jest.mock("../../src/models/User", () => ({
   findOne:   jest.fn(),
@@ -260,7 +269,6 @@ describe("PUT /api/users/:id", () => {
 describe("DELETE /api/users/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  // ✅ DELETE cần admin — mock verifyToken trả role: "admin"
   it("should delete user successfully", async () => {
     const { verifyToken } = require("../../src/middlewares/auth.middleware");
     verifyToken.mockImplementationOnce
@@ -271,16 +279,12 @@ describe("DELETE /api/users/:id", () => {
       id: 1, destroy: jest.fn().mockResolvedValue(true),
     });
 
-    // ✅ Route DELETE /users/:id cần admin — test bằng cách check route protect
-    // Vì mock verifyToken luôn trả user, ta test logic controller trực tiếp
     const res = await request(app).delete("/api/users/1");
-    // Admin route trả 403 với role "user" — đây là đúng behavior
     expect([200, 403]).toContain(res.statusCode);
   });
 
   it("should return 403 if not admin", async () => {
     const res = await request(app).delete("/api/users/1");
-    // Mock hiện tại là role: "user" → đúng là 403
     expect(res.statusCode).toBe(403);
   });
 });
@@ -367,13 +371,19 @@ describe("POST /api/orders", () => {
 
   it("should return 404 if product not found", async () => {
     Product.findByPk.mockResolvedValue(null);
-    const res = await request(app).post("/api/orders").send({ items: [{ productId: 999, quantity: 1 }] });
+    const res = await request(app).post("/api/orders").send({
+      items: [{ productId: 999, quantity: 1 }],
+      shippingInfo: { name: "A", phone: "0909123456", email: "a@gmail.com", address: "123" },
+    });
     expect(res.statusCode).toBe(404);
   });
 
   it("should return 400 if out of stock", async () => {
     Product.findByPk.mockResolvedValue({ id: 1, title: "iPhone", price: 33990000, stock: 0 });
-    const res = await request(app).post("/api/orders").send({ items: [{ productId: 1, quantity: 5 }] });
+    const res = await request(app).post("/api/orders").send({
+      items: [{ productId: 1, quantity: 5 }],
+      shippingInfo: { name: "A", phone: "0909123456", email: "a@gmail.com", address: "123" },
+    });
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("chỉ còn");
   });
@@ -386,7 +396,6 @@ describe("GET /api/orders/me", () => {
     Order.findAll.mockResolvedValue([{ id: 1, status: "pending" }]);
     const res = await request(app).get("/api/orders/me");
     expect(res.statusCode).toBe(200);
-    // ✅ cursor-based: data nằm trong res.body.data.data
     expect(Array.isArray(res.body.data.data)).toBe(true);
     expect(res.body.data).toHaveProperty("hasMore");
     expect(res.body.data).toHaveProperty("nextCursor");
@@ -396,7 +405,6 @@ describe("GET /api/orders/me", () => {
     Order.findAll.mockResolvedValue([]);
     const res = await request(app).get("/api/orders/me");
     expect(res.statusCode).toBe(200);
-    // ✅ cursor-based: check data.data
     expect(res.body.data.data).toHaveLength(0);
     expect(res.body.data.hasMore).toBe(false);
     expect(res.body.data.nextCursor).toBeNull();
@@ -472,6 +480,7 @@ describe("GET /api/products/:id/reviews", () => {
     Review.findAll.mockResolvedValue([
       { id: 1, rating: 5, comment: "Great!", User: { id: 1, name: "User 1" } },
     ]);
+    Product.findByPk.mockResolvedValue({ avgRating: 5, totalReviews: 1 });
     const res = await request(app).get("/api/products/1/reviews");
     expect(res.statusCode).toBe(200);
     expect(res.body.data).toHaveProperty("reviews");
@@ -481,6 +490,7 @@ describe("GET /api/products/:id/reviews", () => {
 
   it("should return empty reviews with avgRating 0", async () => {
     Review.findAll.mockResolvedValue([]);
+    Product.findByPk.mockResolvedValue({ avgRating: 0, totalReviews: 0 });
     const res = await request(app).get("/api/products/999/reviews");
     expect(res.statusCode).toBe(200);
     expect(res.body.data.avgRating).toBe(0);
