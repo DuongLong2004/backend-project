@@ -1,12 +1,8 @@
-
-
-
-
-
 const bcrypt = require("bcrypt");
 const User = require("../models/User");
 const AppError = require("../utils/AppError");
 const catchAsync = require("../utils/catchAsync");
+const { sendResponse } = require("../utils/response"); 
 
 /**
  * REGISTER
@@ -19,7 +15,6 @@ exports.createUser = catchAsync(async (req, res, next) => {
     return next(new AppError("Email already exists", 400));
   }
 
-  // 🔐 HASH PASSWORD
   const hashedPassword = await bcrypt.hash(password, 10);
 
   const user = await User.create({
@@ -27,18 +22,14 @@ exports.createUser = catchAsync(async (req, res, next) => {
     email,
     password: hashedPassword,
     age,
-    role: "user", // 🔒 không cho client set role
+    role: "user", // không cho client set role
   });
 
-  res.status(201).json({
-    status: "success",
-    message: "Register successfully",
-    data: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      age: user.age,
-    },
+  return sendResponse(res, 201, "success", "Register successfully", {
+    id:    user.id,
+    name:  user.name,
+    email: user.email,
+    age:   user.age,
   });
 });
 
@@ -50,10 +41,7 @@ exports.getUsers = catchAsync(async (req, res, next) => {
     attributes: ["id", "name", "email", "age", "role"],
   });
 
-  res.status(200).json({
-    status: "success",
-    data: users,
-  });
+  return sendResponse(res, 200, "success", "OK", users);
 });
 
 /**
@@ -68,10 +56,7 @@ exports.getUserById = catchAsync(async (req, res, next) => {
     return next(new AppError("User not found", 404));
   }
 
-  res.status(200).json({
-    status: "success",
-    data: user,
-  });
+  return sendResponse(res, 200, "success", "OK", user);
 });
 
 /**
@@ -84,20 +69,16 @@ exports.updateUser = catchAsync(async (req, res, next) => {
     return next(new AppError("User not found", 404));
   }
 
-  // ❌ không cho update role & password ở đây
+  // không cho update role & password ở đây
   const { role, password, ...allowedData } = req.body;
 
   await user.update(allowedData);
 
-  res.status(200).json({
-    status: "success",
-    message: "Update user successfully",
-    data: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      age: user.age,
-    },
+  return sendResponse(res, 200, "success", "Update user successfully", {
+    id:    user.id,
+    name:  user.name,
+    email: user.email,
+    age:   user.age,
   });
 });
 
@@ -113,12 +94,8 @@ exports.deleteUser = catchAsync(async (req, res, next) => {
 
   await user.destroy();
 
-  res.status(200).json({
-    status: "success",
-    message: "Delete user successfully",
-  });
+  return sendResponse(res, 200, "success", "Delete user successfully");
 });
-
 
 /**
  * CHANGE USER ROLE (ADMIN ONLY)
@@ -126,7 +103,6 @@ exports.deleteUser = catchAsync(async (req, res, next) => {
 exports.changeUserRole = catchAsync(async (req, res, next) => {
   const { role } = req.body;
 
-  // ❗ chỉ cho 2 role hợp lệ
   if (!["user", "admin"].includes(role)) {
     return next(new AppError("Invalid role", 400));
   }
@@ -137,7 +113,7 @@ exports.changeUserRole = catchAsync(async (req, res, next) => {
     return next(new AppError("User not found", 404));
   }
 
-  // ❌ không cho tự đổi role của chính mình (optional – rất nên có)
+  // không cho tự đổi role của chính mình
   if (req.user.id === user.id) {
     return next(new AppError("Cannot change your own role", 403));
   }
@@ -145,14 +121,9 @@ exports.changeUserRole = catchAsync(async (req, res, next) => {
   user.role = role;
   await user.save();
 
-  res.status(200).json({
-    status: "success",
-    message: "Change role successfully",
-    data: {
-      id: user.id,
-      email: user.email,
-      role: user.role,
-    },
+  return sendResponse(res, 200, "success", "Change role successfully", {
+    id:    user.id,
+    email: user.email,
+    role:  user.role,
   });
 });
-
