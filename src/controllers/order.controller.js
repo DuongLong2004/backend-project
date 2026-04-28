@@ -20,7 +20,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
   if (!items || items.length === 0)
     return next(new AppError("Order must have at least 1 item", 400));
 
-  // ✅ Validate shippingInfo sớm — tránh crash ở tầng DB
   if (!shippingInfo?.name || !shippingInfo?.phone || !shippingInfo?.email || !shippingInfo?.address)
     return next(new AppError("Shipping info (name, phone, email, address) is required", 400));
 
@@ -29,7 +28,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
     const orderItemsData = [];
 
     for (const item of items) {
-      // ── 1. Lock product row ──────────────────────────────────
       const product = await Product.findByPk(item.productId, {
         lock: t.LOCK.UPDATE,
         transaction: t,
@@ -44,7 +42,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
           400
         );
 
-      // ── 2. Kiểm tra flash sale stock nếu item có placementId ──
       let flashPlacement = null;
       if (item.placementId) {
         flashPlacement = await ProductPlacement.findOne({
@@ -74,7 +71,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
         }
       }
 
-      // ── 3. Tính giá — ưu tiên salePrice nếu flash sale còn hiệu lực ──
       let unitPrice = parsePrice(product.price);
 
       if (item.placementId && flashPlacement?.salePrice) {
@@ -97,7 +93,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
       });
     }
 
-    // ── 4. Tạo order ─────────────────────────────────────────
     const order = await Order.create({
       userId,
       totalAmount,
@@ -113,7 +108,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
       { transaction: t }
     );
 
-    // ── 5. Trừ stock kho + tăng sold ─────────────────────────
     for (const item of items) {
       await Product.increment(
         { stock: -item.quantity, sold: item.quantity },
@@ -121,7 +115,6 @@ exports.createOrder = catchAsync(async (req, res, next) => {
       );
     }
 
-    // ── 6. Tăng stockSold flash sale ─────────────────────────
     for (const item of orderItemsData) {
       if (!item.placementId) continue;
 
@@ -210,24 +203,46 @@ exports.getOrderById = catchAsync(async (req, res, next) => {
    PATCH /orders/:id/cancel
 ───────────────────────────────────────────── */
 exports.cancelOrder = catchAsync(async (req, res, next) => {
-  const order = await Order.findByPk(req.params.id, {
-    include: [{ model: OrderItem }],
-  });
-
-  if (!order) return next(new AppError("Order not found", 404));
-  if (order.userId !== req.user.id) return next(new AppError("Forbidden", 403));
-  if (order.status === "completed")  return next(new AppError("Cannot cancel a completed order", 400));
-  if (order.status === "cancelled")  return next(new AppError("Order already cancelled", 400));
-
   await sequelize.transaction(async (t) => {
-    await order.update({ status: "cancelled" }, { transaction: t });
+    // ── Bước 1: Load order kèm items, lock row để đọc thông tin ──
+    const order = await Order.findByPk(req.params.id, {
+      include: [{ model: OrderItem }],
+      lock: t.LOCK.UPDATE, // ✅ Lock row — chặn request đồng thời đọc cùng lúc
+      transaction: t,
+    });
 
+    if (!order) throw new AppError("Order not found", 404);
+    if (order.userId !== req.user.id) throw new AppError("Forbidden", 403);
+    if (order.status === "completed") throw new AppError("Cannot cancel a completed order", 400);
+    if (order.status === "cancelled") throw new AppError("Order already cancelled", 400);
+
+    // ── Bước 2: Atomic UPDATE — chỉ update nếu status vẫn còn cancellable ──
+    // WHERE id = ? AND status IN ('pending', 'confirmed')
+    // Nếu status đã bị đổi bởi request khác → affectedRows = 0 → throw error
+    const [affectedRows] = await Order.update(
+      { status: "cancelled" },
+      {
+        where: {
+          id:     order.id,
+          status: { [Op.in]: ["pending", "confirmed"] },
+        },
+        transaction: t,
+      }
+    );
+
+    // affectedRows = 0 → status đã bị thay đổi bởi request khác trước đó
+    if (affectedRows === 0) {
+      throw new AppError("Order đã được xử lý bởi một yêu cầu khác, vui lòng thử lại", 409);
+    }
+
+    // ── Bước 3: Hoàn stock + sold sau khi cancel thành công ──
     for (const item of order.OrderItems) {
       await Product.increment(
         { stock: item.quantity, sold: -item.quantity },
         { where: { id: item.productId }, transaction: t }
       );
 
+      // Hoàn stockSold flash sale nếu có
       if (item.placementId) {
         await ProductPlacement.increment(
           { stockSold: -item.quantity },
@@ -235,6 +250,7 @@ exports.cancelOrder = catchAsync(async (req, res, next) => {
             where: {
               id:        item.placementId,
               placement: "flashsale",
+              // Đảm bảo stockSold không bị âm
               stockSold: { [Op.gte]: item.quantity },
             },
             transaction: t,
@@ -300,16 +316,44 @@ exports.updateOrderStatus = catchAsync(async (req, res, next) => {
   if (!validStatuses.includes(status))
     return next(new AppError("Invalid status", 400));
 
-  const order = await Order.findByPk(req.params.id);
-  if (!order) return next(new AppError("Order not found", 404));
+  await sequelize.transaction(async (t) => {
+    const order = await Order.findByPk(req.params.id, {
+      include: [{ model: OrderItem }],
+      lock: t.LOCK.UPDATE,
+      transaction: t,
+    });
 
-  if (order.status === "completed" || order.status === "cancelled")
-    return next(new AppError(`Cannot change status from "${order.status}"`, 400));
+    if (!order) throw new AppError("Order not found", 404);
 
-  await order.update({ status });
+    if (order.status === "completed" || order.status === "cancelled")
+      throw new AppError(`Cannot change status from "${order.status}"`, 400);
 
-  return sendResponse(res, 200, "success", "Order status updated", {
-    id:     order.id,
-    status: order.status,
+    
+    if (status === "cancelled" && order.status !== "cancelled") {
+      for (const item of order.OrderItems) {
+        await Product.increment(
+          { stock: item.quantity, sold: -item.quantity },
+          { where: { id: item.productId }, transaction: t }
+        );
+
+        if (item.placementId) {
+          await ProductPlacement.increment(
+            { stockSold: -item.quantity },
+            {
+              where: {
+                id:        item.placementId,
+                placement: "flashsale",
+                stockSold: { [Op.gte]: item.quantity },
+              },
+              transaction: t,
+            }
+          );
+        }
+      }
+    }
+
+    await order.update({ status }, { transaction: t });
   });
+
+  return sendResponse(res, 200, "success", "Order status updated");
 });
