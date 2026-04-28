@@ -1,6 +1,3 @@
-
-
-
 const { DataTypes } = require("sequelize");
 const sequelize = require("../config/db");
 
@@ -20,7 +17,7 @@ const User = sequelize.define(
     email: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true, // ✅ unique tự tạo index
+      unique: true,
       validate: { isEmail: true },
     },
     password: {
@@ -37,14 +34,14 @@ const User = sequelize.define(
       allowNull: false,
       defaultValue: "user",
     },
-    // ❌ TEXT column không index được trong MySQL
-    // Query WHERE refreshToken = ? vẫn hoạt động, chỉ full scan
-    // Nếu muốn index: đổi sang DataTypes.STRING(500)
+
+    
     refreshToken: {
-      type: DataTypes.TEXT,
+      type: DataTypes.STRING(512),
       allowNull: true,
       defaultValue: null,
     },
+
     avatar: {
       type: DataTypes.STRING,
       allowNull: true,
@@ -55,9 +52,11 @@ const User = sequelize.define(
     tableName: "users",
     timestamps: true,
     indexes: [
-      // ✅ Chỉ index role — email đã có unique index tự động
-      // ❌ Bỏ refreshToken index vì TEXT không index được trong MySQL
+      // index role — dùng cho checkRole middleware
       { fields: ["role"], name: "idx_users_role" },
+
+     
+      { fields: ["refreshToken"], name: "idx_users_refresh_token" },
     ],
   }
 );
