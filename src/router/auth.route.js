@@ -1,10 +1,8 @@
-
-
-
-
 const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/auth.controller");
+const validate = require("../middlewares/validate.middleware");
+const { registerSchema, loginSchema } = require("../validations/user.validation");
 
 /**
  * @swagger
@@ -42,7 +40,8 @@ const authController = require("../controllers/auth.controller");
  *       409:
  *         description: Email đã tồn tại
  */
-router.post("/register", authController.register);
+// Thêm validate(registerSchema) — sanitize XSS + validate input trước khi vào controller
+router.post("/register", validate(registerSchema), authController.register);
 
 /**
  * @swagger
@@ -70,7 +69,8 @@ router.post("/register", authController.register);
  *       401:
  *         description: Sai email hoặc password
  */
-router.post("/login", authController.login);
+// Thêm validate(loginSchema) — sanitize + validate
+router.post("/login", validate(loginSchema), authController.login);
 
 /**
  * @swagger
