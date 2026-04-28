@@ -25,8 +25,10 @@ jest.mock("../../src/models/User", () => ({
 jest.mock("../../src/models/index", () => ({
   User: require("../../src/models/User"),
   Order: {
-    create: jest.fn(), findAll: jest.fn(),
+    create:  jest.fn(), findAll: jest.fn(),
     findOne: jest.fn(), findByPk: jest.fn(),
+    // ✅ Fix: thêm update mock cho cancelOrder atomic UPDATE
+    update:  jest.fn().mockResolvedValue([1]),
     hasMany: jest.fn(), belongsTo: jest.fn(),
   },
   OrderItem: {
@@ -61,6 +63,13 @@ jest.mock("../../src/models/index", () => ({
     findOrCreate: jest.fn(),
     hasMany:      jest.fn(),
     belongsTo:    jest.fn(),
+  },
+  // ✅ Fix: thêm ProductPlacement mock cho cancelOrder
+  ProductPlacement: {
+    findOne:   jest.fn(),
+    increment: jest.fn().mockResolvedValue(true),
+    belongsTo: jest.fn(),
+    hasMany:   jest.fn(),
   },
   sequelize: {
     sync:        jest.fn().mockResolvedValue(true),
@@ -357,7 +366,8 @@ describe("POST /api/orders", () => {
 
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 1, quantity: 2 }],
-      shippingInfo: { name: "A", phone: "0909123456", email: "a@gmail.com", address: "123" },
+      // ✅ Fix: name >= 2 ký tự, address >= 5 ký tự theo Joi schema
+      shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
     });
     expect(res.statusCode).toBe(201);
     expect(res.body.data).toHaveProperty("orderId");
@@ -373,7 +383,8 @@ describe("POST /api/orders", () => {
     Product.findByPk.mockResolvedValue(null);
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 999, quantity: 1 }],
-      shippingInfo: { name: "A", phone: "0909123456", email: "a@gmail.com", address: "123" },
+      // ✅ Fix: name >= 2 ký tự, address >= 5 ký tự
+      shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
     });
     expect(res.statusCode).toBe(404);
   });
@@ -382,7 +393,8 @@ describe("POST /api/orders", () => {
     Product.findByPk.mockResolvedValue({ id: 1, title: "iPhone", price: 33990000, stock: 0 });
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 1, quantity: 5 }],
-      shippingInfo: { name: "A", phone: "0909123456", email: "a@gmail.com", address: "123" },
+      // ✅ Fix: name >= 2 ký tự, address >= 5 ký tự
+      shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
     });
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("chỉ còn");
@@ -437,7 +449,16 @@ describe("PATCH /api/orders/:id/cancel", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should cancel order", async () => {
-    Order.findByPk.mockResolvedValue({ id: 1, userId: 1, status: "pending", OrderItems: [], update: jest.fn() });
+    // ✅ Fix: cancelOrder dùng LOCK.UPDATE + Order.update atomic
+    // Mock findByPk trả order hợp lệ
+    Order.findByPk.mockResolvedValue({
+      id: 1, userId: 1, status: "pending",
+      OrderItems: [],
+      update: jest.fn().mockResolvedValue(true),
+    });
+    // Mock Order.update cho atomic UPDATE WHERE status IN (pending, confirmed)
+    Order.update.mockResolvedValue([1]); // affectedRows = 1 → thành công
+
     const res = await request(app).patch("/api/orders/1/cancel");
     expect(res.statusCode).toBe(200);
   });
