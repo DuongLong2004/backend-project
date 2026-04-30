@@ -15,14 +15,16 @@ exports.getUsers = catchAsync(async (req, res) => {
 });
 
 // GET /api/users/:id
+// Truyền req.user xuống service để service tự kiểm tra ownership
 exports.getUserById = catchAsync(async (req, res) => {
-  const data = await userService.getUserById(req.params.id);
+  const data = await userService.getUserById(req.params.id, req.user);
   return sendResponse(res, 200, "success", "OK", data);
 });
 
 // PUT /api/users/:id
+// Truyền req.user xuống service để service tự kiểm tra ownership
 exports.updateUser = catchAsync(async (req, res) => {
-  const data = await userService.updateUser(req.params.id, req.body);
+  const data = await userService.updateUser(req.params.id, req.body, req.user);
   return sendResponse(res, 200, "success", "Update user successfully", data);
 });
 
@@ -35,9 +37,9 @@ exports.deleteUser = catchAsync(async (req, res) => {
 // PATCH /api/users/:id/role  (admin)
 exports.changeUserRole = catchAsync(async (req, res) => {
   const data = await userService.changeUserRole(
-    req.params.id,   // targetId
-    req.body.role,   // role mới
-    req.user.id      // requesterId — để check không tự đổi mình
+    req.params.id,
+    req.body.role,
+    req.user.id
   );
   return sendResponse(res, 200, "success", "Change role successfully", data);
 });

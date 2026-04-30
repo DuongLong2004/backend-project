@@ -2,7 +2,6 @@ const request = require("supertest");
 const bcrypt  = require("bcrypt");
 const jwt     = require("jsonwebtoken");
 
-// ✅ Mock Redis trước khi load app — tránh lỗi khi test không có Redis thật
 jest.mock("../../src/config/redis", () => ({
   isReady: false,
   get:   jest.fn().mockResolvedValue(null),
@@ -11,7 +10,6 @@ jest.mock("../../src/config/redis", () => ({
   del:   jest.fn().mockResolvedValue(true),
 }));
 
-// ✅ Mock tất cả model trước khi load app
 jest.mock("../../src/models/User", () => ({
   findOne:   jest.fn(),
   create:    jest.fn(),
@@ -27,7 +25,6 @@ jest.mock("../../src/models/index", () => ({
   Order: {
     create:  jest.fn(), findAll: jest.fn(),
     findOne: jest.fn(), findByPk: jest.fn(),
-    // ✅ Fix: thêm update mock cho cancelOrder atomic UPDATE
     update:  jest.fn().mockResolvedValue([1]),
     hasMany: jest.fn(), belongsTo: jest.fn(),
   },
@@ -64,7 +61,6 @@ jest.mock("../../src/models/index", () => ({
     hasMany:      jest.fn(),
     belongsTo:    jest.fn(),
   },
-  // ✅ Fix: thêm ProductPlacement mock cho cancelOrder
   ProductPlacement: {
     findOne:   jest.fn(),
     increment: jest.fn().mockResolvedValue(true),
@@ -82,6 +78,8 @@ jest.mock("../../src/models/index", () => ({
   },
 }));
 
+// Mock verifyToken: req.user = { id: 1, role: "user" }
+// Tất cả test ownership đều dùng id=1 để match
 jest.mock("../../src/middlewares/auth.middleware", () => ({
   verifyToken: (req, res, next) => {
     req.user = { id: 1, role: "user" };
@@ -241,16 +239,25 @@ describe("POST /api/auth/logout", () => {
 describe("GET /api/users/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("should return user by id", async () => {
+  it("should return user by id (owner)", async () => {
+    // verifyToken mock trả id=1, test GET /api/users/1 → match owner
     User.findByPk.mockResolvedValue({ id: 1, name: "Test", email: "t@gmail.com", role: "user" });
     const res = await request(app).get("/api/users/1");
     expect(res.statusCode).toBe(200);
     expect(res.body.status).toBe("success");
   });
 
+  it("should return 403 if not owner and not admin", async () => {
+    // verifyToken mock trả id=1, test GET /api/users/2 → khác owner → 403
+    const res = await request(app).get("/api/users/2");
+    expect(res.statusCode).toBe(403);
+    expect(res.body.message).toBe("Forbidden");
+  });
+
   it("should return 404 if user not found", async () => {
+    // id=1 match owner nên qua được ownership check
     User.findByPk.mockResolvedValue(null);
-    const res = await request(app).get("/api/users/999");
+    const res = await request(app).get("/api/users/1");
     expect(res.statusCode).toBe(404);
     expect(res.body.message).toBe("User not found");
   });
@@ -259,7 +266,8 @@ describe("GET /api/users/:id", () => {
 describe("PUT /api/users/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("should update user successfully", async () => {
+  it("should update user successfully (owner)", async () => {
+    // verifyToken mock trả id=1, test PUT /api/users/1 → match owner
     User.findByPk.mockResolvedValue({
       id: 1, name: "Old", email: "t@gmail.com", age: 20, role: "user",
       update: jest.fn().mockResolvedValue(true),
@@ -268,9 +276,16 @@ describe("PUT /api/users/:id", () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it("should return 403 if not owner and not admin", async () => {
+    // verifyToken mock trả id=1, test PUT /api/users/2 → khác owner → 403
+    const res = await request(app).put("/api/users/2").send({ name: "Hacked" });
+    expect(res.statusCode).toBe(403);
+    expect(res.body.message).toBe("Forbidden");
+  });
+
   it("should return 404 if user not found", async () => {
     User.findByPk.mockResolvedValue(null);
-    const res = await request(app).put("/api/users/999").send({ name: "X" });
+    const res = await request(app).put("/api/users/1").send({ name: "X" });
     expect(res.statusCode).toBe(404);
   });
 });
@@ -278,21 +293,8 @@ describe("PUT /api/users/:id", () => {
 describe("DELETE /api/users/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("should delete user successfully", async () => {
-    const { verifyToken } = require("../../src/middlewares/auth.middleware");
-    verifyToken.mockImplementationOnce
-      ? verifyToken.mockImplementationOnce((req, res, next) => { req.user = { id: 99, role: "admin" }; next(); })
-      : null;
-
-    User.findByPk.mockResolvedValue({
-      id: 1, destroy: jest.fn().mockResolvedValue(true),
-    });
-
-    const res = await request(app).delete("/api/users/1");
-    expect([200, 403]).toContain(res.statusCode);
-  });
-
   it("should return 403 if not admin", async () => {
+    // verifyToken mock trả role="user" → checkRole("admin") chặn lại
     const res = await request(app).delete("/api/users/1");
     expect(res.statusCode).toBe(403);
   });
@@ -366,7 +368,6 @@ describe("POST /api/orders", () => {
 
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 1, quantity: 2 }],
-      // ✅ Fix: name >= 2 ký tự, address >= 5 ký tự theo Joi schema
       shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
     });
     expect(res.statusCode).toBe(201);
@@ -383,7 +384,6 @@ describe("POST /api/orders", () => {
     Product.findByPk.mockResolvedValue(null);
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 999, quantity: 1 }],
-      // ✅ Fix: name >= 2 ký tự, address >= 5 ký tự
       shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
     });
     expect(res.statusCode).toBe(404);
@@ -393,7 +393,6 @@ describe("POST /api/orders", () => {
     Product.findByPk.mockResolvedValue({ id: 1, title: "iPhone", price: 33990000, stock: 0 });
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 1, quantity: 5 }],
-      // ✅ Fix: name >= 2 ký tự, address >= 5 ký tự
       shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
     });
     expect(res.statusCode).toBe(400);
@@ -449,15 +448,12 @@ describe("PATCH /api/orders/:id/cancel", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should cancel order", async () => {
-    // ✅ Fix: cancelOrder dùng LOCK.UPDATE + Order.update atomic
-    // Mock findByPk trả order hợp lệ
     Order.findByPk.mockResolvedValue({
       id: 1, userId: 1, status: "pending",
       OrderItems: [],
       update: jest.fn().mockResolvedValue(true),
     });
-    // Mock Order.update cho atomic UPDATE WHERE status IN (pending, confirmed)
-    Order.update.mockResolvedValue([1]); // affectedRows = 1 → thành công
+    Order.update.mockResolvedValue([1]);
 
     const res = await request(app).patch("/api/orders/1/cancel");
     expect(res.statusCode).toBe(200);
