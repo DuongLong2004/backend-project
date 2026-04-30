@@ -1,10 +1,4 @@
-
-
-
-
 const Joi = require("joi");
-
-// ─── User ─────────────────────────────────────────────
 
 exports.createUserSchema = Joi.object({
   name:     Joi.string().min(3).max(100).required(),
@@ -13,7 +7,6 @@ exports.createUserSchema = Joi.object({
   age:      Joi.number().integer().min(1).max(120).optional(),
 });
 
-// ✅ Update không bắt buộc field nào, nhưng phải có ít nhất 1
 exports.updateUserSchema = Joi.object({
   name: Joi.string().min(3).max(100),
   age:  Joi.number().integer().min(1).max(120),
@@ -21,14 +14,17 @@ exports.updateUserSchema = Joi.object({
   "object.min": "At least one field is required to update",
 });
 
-// ─── Order ───────────────────────────────────────────
-
 exports.createOrderSchema = Joi.object({
   items: Joi.array()
     .items(
       Joi.object({
         productId: Joi.number().integer().positive().required(),
-        quantity:  Joi.number().integer().min(1).required(),
+
+        // max(100) — chặn probe stock qua quantity cực lớn
+        quantity: Joi.number().integer().min(1).max(100).required(),
+
+        // không cho phép attacker gửi placementId tùy ý
+        placementId: Joi.number().integer().positive().optional(),
       })
     )
     .min(1)
@@ -50,8 +46,6 @@ exports.createOrderSchema = Joi.object({
     .valid("cod", "banking", "momo")
     .default("cod"),
 });
-
-// ─── Auth ────────────────────────────────────────────
 
 exports.loginSchema = Joi.object({
   email:    Joi.string().email().required(),
