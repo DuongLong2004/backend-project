@@ -3,10 +3,12 @@ const jwt      = require("jsonwebtoken");
 const User     = require("../models/User");
 const AppError = require("../utils/AppError");
 const logger   = require("../utils/logger");
+const {
+  setRefreshToken,
+  getRefreshToken,
+  deleteRefreshToken,
+} = require("../config/redis");
 
-// ─────────────────────────────────────────────
-// Private helpers — chỉ dùng nội bộ service
-// ─────────────────────────────────────────────
 const generateAccessToken = (user) =>
   jwt.sign(
     { id: user.id, email: user.email, role: user.role },
@@ -21,12 +23,7 @@ const generateRefreshToken = (user) =>
     { expiresIn: "7d" }
   );
 
-// ─────────────────────────────────────────────
-// register({ name, email, password })
-// → { id, name, email, role }
-// ─────────────────────────────────────────────
 exports.register = async ({ name, email, password }) => {
-  // Validate — giữ nguyên thứ tự check như controller gốc
   if (!name || !email || !password) {
     throw new AppError("Name, email and password are required", 400);
   }
@@ -52,10 +49,6 @@ exports.register = async ({ name, email, password }) => {
   };
 };
 
-// ─────────────────────────────────────────────
-// login({ email, password, ip })
-// → { accessToken, refreshToken, user }
-// ─────────────────────────────────────────────
 exports.login = async ({ email, password, ip }) => {
   if (!email || !password) {
     throw new AppError("Email and password are required", 400);
@@ -75,7 +68,13 @@ exports.login = async ({ email, password, ip }) => {
 
   const accessToken  = generateAccessToken(user);
   const refreshToken = generateRefreshToken(user);
-  await user.update({ refreshToken });
+
+  /*
+   * Lưu refresh token vào Redis thay vì DB.
+   * TTL 7 ngày khớp với JWT expiresIn — token hết hạn sẽ tự bị xóa khỏi Redis.
+   * Key: refresh:{userId} — 1 user chỉ có 1 active session tại 1 thời điểm.
+   */
+  await setRefreshToken(user.id, refreshToken);
 
   logger.info(`LOGIN SUCCESS: email=${email} ip=${ip}`);
 
@@ -91,10 +90,6 @@ exports.login = async ({ email, password, ip }) => {
   };
 };
 
-// ─────────────────────────────────────────────
-// refresh({ refreshToken })
-// → { accessToken, refreshToken }
-// ─────────────────────────────────────────────
 exports.refresh = async ({ refreshToken }) => {
   if (!refreshToken) {
     throw new AppError("Refresh token is required", 400);
@@ -107,12 +102,23 @@ exports.refresh = async ({ refreshToken }) => {
     throw new AppError("Invalid or expired refresh token", 401);
   }
 
-  const user = await User.findOne({ where: { id: decoded.id, refreshToken } });
-  if (!user) throw new AppError("Refresh token has been revoked", 401);
+  /*
+   * Verify token có trong Redis không — nếu user đã logout hoặc
+   * token bị revoke thì Redis đã DEL key → getRefreshToken trả null.
+   */
+  const storedToken = await getRefreshToken(decoded.id);
+  if (!storedToken || storedToken !== refreshToken) {
+    throw new AppError("Refresh token has been revoked", 401);
+  }
+
+  const user = await User.findByPk(decoded.id);
+  if (!user) throw new AppError("User not found", 401);
 
   const newAccessToken  = generateAccessToken(user);
   const newRefreshToken = generateRefreshToken(user);
-  await user.update({ refreshToken: newRefreshToken });
+
+  // Rotate refresh token — invalidate token cũ, cấp token mới với TTL reset
+  await setRefreshToken(user.id, newRefreshToken);
 
   return {
     accessToken:  newAccessToken,
@@ -120,18 +126,25 @@ exports.refresh = async ({ refreshToken }) => {
   };
 };
 
-// ─────────────────────────────────────────────
-// logout({ refreshToken })
-// → void
-// ─────────────────────────────────────────────
 exports.logout = async ({ refreshToken }) => {
   if (!refreshToken) {
     throw new AppError("Refresh token is required", 400);
   }
 
-  const user = await User.findOne({ where: { refreshToken } });
-  if (!user) throw new AppError("Invalid refresh token", 400);
+  let decoded;
+  try {
+    decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+  } catch {
+    // Token invalid hoặc expired — vẫn coi như logout thành công
+    // vì token đó không thể dùng được nữa
+    throw new AppError("Invalid refresh token", 400);
+  }
 
-  await user.update({ refreshToken: null });
-  logger.info(`LOGOUT: userId=${user.id}`);
+  const storedToken = await getRefreshToken(decoded.id);
+  if (!storedToken) {
+    throw new AppError("Invalid refresh token", 400);
+  }
+
+  await deleteRefreshToken(decoded.id);
+  logger.info(`LOGOUT: userId=${decoded.id}`);
 };

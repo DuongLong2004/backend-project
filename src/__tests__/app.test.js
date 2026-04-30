@@ -3,11 +3,16 @@ const bcrypt  = require("bcrypt");
 const jwt     = require("jsonwebtoken");
 
 jest.mock("../../src/config/redis", () => ({
-  isReady: false,
-  get:   jest.fn().mockResolvedValue(null),
-  setEx: jest.fn().mockResolvedValue(true),
-  keys:  jest.fn().mockResolvedValue([]),
-  del:   jest.fn().mockResolvedValue(true),
+  client: {
+    isReady: false,
+    get:     jest.fn().mockResolvedValue(null),
+    setEx:   jest.fn().mockResolvedValue(true),
+    keys:    jest.fn().mockResolvedValue([]),
+    del:     jest.fn().mockResolvedValue(true),
+  },
+  setRefreshToken:    jest.fn().mockResolvedValue(true),
+  getRefreshToken:    jest.fn().mockResolvedValue(null),
+  deleteRefreshToken: jest.fn().mockResolvedValue(true),
 }));
 
 jest.mock("../../src/models/User", () => ({
@@ -72,14 +77,14 @@ jest.mock("../../src/models/index", () => ({
     define:      jest.fn(),
     fn:          jest.fn().mockReturnValue("fn"),
     col:         jest.fn().mockReturnValue("col"),
+    literal:     jest.fn().mockReturnValue({}),
+    escape:      jest.fn((val) => `'${val}'`),
     transaction: jest.fn().mockImplementation(async (cb) => cb({
       LOCK: { UPDATE: "UPDATE" },
     })),
   },
 }));
 
-// Mock verifyToken: req.user = { id: 1, role: "user" }
-// Tất cả test ownership đều dùng id=1 để match
 jest.mock("../../src/middlewares/auth.middleware", () => ({
   verifyToken: (req, res, next) => {
     req.user = { id: 1, role: "user" };
@@ -180,8 +185,15 @@ describe("POST /api/auth/refresh", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should refresh token successfully", async () => {
+    const { getRefreshToken } = require("../../src/config/redis");
     const refreshToken = generateRefreshToken(1);
-    User.findOne.mockResolvedValue({ id: 1, email: "test@gmail.com", role: "user", refreshToken, update: jest.fn().mockResolvedValue(true) });
+
+    getRefreshToken.mockResolvedValue(refreshToken);
+    User.findByPk.mockResolvedValue({
+      id: 1, email: "test@gmail.com", role: "user",
+      update: jest.fn().mockResolvedValue(true),
+    });
+
     const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
     expect(res.statusCode).toBe(200);
     expect(res.body.data).toHaveProperty("accessToken");
@@ -200,8 +212,12 @@ describe("POST /api/auth/refresh", () => {
   });
 
   it("should return 401 if refreshToken revoked", async () => {
+    const { getRefreshToken } = require("../../src/config/redis");
     const refreshToken = generateRefreshToken(1);
-    User.findOne.mockResolvedValue(null);
+
+    // Redis trả null → token đã bị xóa / revoked
+    getRefreshToken.mockResolvedValue(null);
+
     const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe("Refresh token has been revoked");
@@ -212,8 +228,14 @@ describe("POST /api/auth/logout", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should logout successfully", async () => {
+    const { getRefreshToken } = require("../../src/config/redis");
     const refreshToken = generateRefreshToken(1);
-    User.findOne.mockResolvedValue({ id: 1, refreshToken, update: jest.fn().mockResolvedValue(true) });
+
+    getRefreshToken.mockResolvedValue(refreshToken);
+    User.findByPk.mockResolvedValue({
+      id: 1, update: jest.fn().mockResolvedValue(true),
+    });
+
     const res = await request(app).post("/api/auth/logout").send({ refreshToken });
     expect(res.statusCode).toBe(200);
     expect(res.body.message).toBe("Logged out successfully");
@@ -225,7 +247,9 @@ describe("POST /api/auth/logout", () => {
   });
 
   it("should return 400 if refreshToken not found", async () => {
-    User.findOne.mockResolvedValue(null);
+    const { getRefreshToken } = require("../../src/config/redis");
+    getRefreshToken.mockResolvedValue(null);
+
     const res = await request(app).post("/api/auth/logout").send({ refreshToken: "invalid.token" });
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toBe("Invalid refresh token");
@@ -240,7 +264,6 @@ describe("GET /api/users/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should return user by id (owner)", async () => {
-    // verifyToken mock trả id=1, test GET /api/users/1 → match owner
     User.findByPk.mockResolvedValue({ id: 1, name: "Test", email: "t@gmail.com", role: "user" });
     const res = await request(app).get("/api/users/1");
     expect(res.statusCode).toBe(200);
@@ -248,14 +271,12 @@ describe("GET /api/users/:id", () => {
   });
 
   it("should return 403 if not owner and not admin", async () => {
-    // verifyToken mock trả id=1, test GET /api/users/2 → khác owner → 403
     const res = await request(app).get("/api/users/2");
     expect(res.statusCode).toBe(403);
     expect(res.body.message).toBe("Forbidden");
   });
 
   it("should return 404 if user not found", async () => {
-    // id=1 match owner nên qua được ownership check
     User.findByPk.mockResolvedValue(null);
     const res = await request(app).get("/api/users/1");
     expect(res.statusCode).toBe(404);
@@ -267,7 +288,6 @@ describe("PUT /api/users/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should update user successfully (owner)", async () => {
-    // verifyToken mock trả id=1, test PUT /api/users/1 → match owner
     User.findByPk.mockResolvedValue({
       id: 1, name: "Old", email: "t@gmail.com", age: 20, role: "user",
       update: jest.fn().mockResolvedValue(true),
@@ -277,7 +297,6 @@ describe("PUT /api/users/:id", () => {
   });
 
   it("should return 403 if not owner and not admin", async () => {
-    // verifyToken mock trả id=1, test PUT /api/users/2 → khác owner → 403
     const res = await request(app).put("/api/users/2").send({ name: "Hacked" });
     expect(res.statusCode).toBe(403);
     expect(res.body.message).toBe("Forbidden");
@@ -294,7 +313,6 @@ describe("DELETE /api/users/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should return 403 if not admin", async () => {
-    // verifyToken mock trả role="user" → checkRole("admin") chặn lại
     const res = await request(app).delete("/api/users/1");
     expect(res.statusCode).toBe(403);
   });
