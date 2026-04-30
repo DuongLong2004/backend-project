@@ -1,8 +1,23 @@
-const express = require("express");
-const router = express.Router();
+const express    = require("express");
+const router     = express.Router();
+const rateLimit  = require("express-rate-limit");
 const authController = require("../controllers/auth.controller");
-const validate = require("../middlewares/validate.middleware");
+const validate       = require("../middlewares/validate.middleware");
 const { registerSchema, loginSchema } = require("../validations/user.validation");
+
+/*
+ * Rate limit riêng cho login: 5 lần / 15 phút / IP.
+ * Đặt ở đây thay vì app.js để giữ logic gần với route liên quan.
+ */
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max:      5,
+  message:  {
+    status:  "error",
+    message: "Too many login attempts, please try again after 15 minutes",
+    data:    null,
+  },
+});
 
 /**
  * @swagger
@@ -40,7 +55,6 @@ const { registerSchema, loginSchema } = require("../validations/user.validation"
  *       409:
  *         description: Email đã tồn tại
  */
-// Thêm validate(registerSchema) — sanitize XSS + validate input trước khi vào controller
 router.post("/register", validate(registerSchema), authController.register);
 
 /**
@@ -68,9 +82,10 @@ router.post("/register", validate(registerSchema), authController.register);
  *         description: Login thành công – trả về accessToken + refreshToken
  *       401:
  *         description: Sai email hoặc password
+ *       429:
+ *         description: Quá nhiều lần thử, vui lòng thử lại sau 15 phút
  */
-// Thêm validate(loginSchema) — sanitize + validate
-router.post("/login", validate(loginSchema), authController.login);
+router.post("/login", loginLimiter, validate(loginSchema), authController.login);
 
 /**
  * @swagger
