@@ -1,25 +1,4 @@
-// const { DataTypes } = require("sequelize");
-// const sequelize = require("../config/db");
 
-// const ProductPlacement = sequelize.define("ProductPlacement", {
-//   id:          { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
-//   productId:   { type: DataTypes.INTEGER, allowNull: false },
-//   placement:   { type: DataTypes.ENUM("homepage", "phones", "laptops", "flashsale"), allowNull: false },
-//   sortOrder:   { type: DataTypes.INTEGER, defaultValue: 0, allowNull: false },
-//   salePrice:   { type: DataTypes.DECIMAL(15, 0), allowNull: true, defaultValue: null },
-//   saleStartAt: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
-//   saleEndAt:   { type: DataTypes.DATE, allowNull: true, defaultValue: null },
-// }, {
-//   tableName:  "product_placements",
-//   timestamps: true,
-//   indexes: [
-//     { fields: ["placement"],              name: "idx_placements_placement"          },
-//     { fields: ["placement", "sortOrder"], name: "idx_placements_placement_sort"     },
-//     { fields: ["productId", "placement"], name: "idx_placements_product_placement", unique: true },
-//   ],
-// });
-
-// module.exports = ProductPlacement;
 
 
 const { DataTypes } = require("sequelize");

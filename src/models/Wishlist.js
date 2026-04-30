@@ -22,10 +22,10 @@ const Wishlist = sequelize.define("Wishlist", {
   tableName: "wishlists",
   timestamps: true,
   indexes: [
-    // ✅ Index userId — GET /api/wishlist query theo userId
+    // Index userId — GET /api/wishlist query theo userId
     { fields: ["userId"], name: "idx_wishlist_user_id" },
 
-    // ✅ Unique composite — 1 user không thêm 1 sản phẩm 2 lần
+    // Unique composite — 1 user không thêm 1 sản phẩm 2 lần
     {
       fields: ["userId", "productId"],
       unique: true,
