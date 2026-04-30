@@ -1,7 +1,5 @@
 const Joi = require("joi");
 
-// ─── User ─────────────────────────────────────────────
-
 exports.createUserSchema = Joi.object({
   name:     Joi.string().min(3).max(100).required(),
   email:    Joi.string().email().required(),
@@ -16,8 +14,6 @@ exports.updateUserSchema = Joi.object({
   "object.min": "At least one field is required to update",
 });
 
-// ─── Order ───────────────────────────────────────────
-
 exports.createOrderSchema = Joi.object({
   items: Joi.array()
     .items(
@@ -25,11 +21,8 @@ exports.createOrderSchema = Joi.object({
         productId: Joi.number().integer().positive().required(),
         quantity:  Joi.number().integer().min(1).max(100).required(),
 
-        /*
-         * convert: true cho phép Joi tự coerce string "123" → number 123
-         * Frontend đôi khi gửi id dạng string từ URL params hoặc form data
-         */
-        placementId: Joi.number().integer().positive().optional(),
+        // allow(null) vì frontend gửi placementId: null khi không phải flash sale
+        placementId: Joi.number().integer().positive().allow(null).optional(),
       })
     )
     .min(1)
@@ -50,9 +43,7 @@ exports.createOrderSchema = Joi.object({
   payMethod: Joi.string()
     .valid("cod", "banking", "momo")
     .default("cod"),
-}).options({ convert: true }); // coerce string numbers toàn bộ schema
-
-// ─── Auth ────────────────────────────────────────────
+}).options({ convert: true });
 
 exports.loginSchema = Joi.object({
   email:    Joi.string().email().required(),
