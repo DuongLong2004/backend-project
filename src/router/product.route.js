@@ -1,6 +1,7 @@
 const express    = require("express");
 const router     = express.Router();
 const { Op }     = require("sequelize");
+const sequelize  = require("../config/db");
 const { Product, ProductSpec } = require("../models/index");
 const { sendResponse }    = require("../utils/response");
 const AppError            = require("../utils/AppError");
@@ -39,7 +40,7 @@ const VALID_STATUSES = ["active", "draft", "outofstock"];
  *         schema: { type: integer, example: 10 }
  *       - in: query
  *         name: search
- *         schema: { type: string, example: iPhone }
+ *         schema: { type: string, example: iPhone 15 }
  *       - in: query
  *         name: category
  *         schema: { type: string, example: phone }
@@ -60,8 +61,6 @@ const VALID_STATUSES = ["active", "draft", "outofstock"];
  *       200:
  *         description: Danh sách sản phẩm kèm meta pagination
  */
-// ✅ cache() — cache kết quả GET /api/products trong 5 phút
-// Mỗi URL khác nhau (page, filter, search) là 1 cache key riêng
 router.get("/", cache(), catchAsync(async (req, res, next) => {
   const page   = parseInt(req.query.page)  || 1;
   const limit  = parseInt(req.query.limit) || 10;
@@ -76,7 +75,40 @@ router.get("/", cache(), catchAsync(async (req, res, next) => {
 
   const where = {};
 
-  if (search) where.title = { [Op.like]: `%${search}%` };
+  // ─── Smart Search ──────────────────────────────────────────────────────
+  // Chiến lược: tách keyword thành từng từ, mỗi từ phải xuất hiện trong title
+  //
+  // Ví dụ: "iphone 15"
+  //   → words = ["iphone", "15"]
+  //   → WHERE title LIKE '%iphone%' AND title LIKE '%15%'
+  //   → Chỉ ra sản phẩm có cả "iphone" VÀ "15" → chính xác ✅
+  //
+  // Ví dụ: "iphon 15"
+  //   → words = ["iphon", "15"]
+  //   → WHERE title LIKE '%iphon%' AND title LIKE '%15%'
+  //   → "iPhone 15 Pro" có "iphone" chứa "iphon" → match ✅
+  //   → "Xiaomi 15T" không có "iphon" → không match ✅
+  //
+  // Tại sao không dùng FULLTEXT?
+  //   FULLTEXT tìm theo từ nguyên — "iphone" và "15" là 2 từ riêng
+  //   → match tất cả sản phẩm có "iphone" HOẶC "15" → không chính xác
+  //   LIKE '%keyword%' tìm substring → "iphon" nằm trong "iphone" → match
+  // ──────────────────────────────────────────────────────────────────────
+  if (search && search.trim()) {
+    const words = search.trim().split(/\s+/).filter(Boolean);
+
+    if (words.length === 1) {
+      // 1 từ → LIKE đơn giản
+      where.title = { [Op.like]: `%${words[0]}%` };
+    } else {
+      // Nhiều từ → mỗi từ phải có trong title (AND)
+      where[Op.and] = words.map(word => ({
+        title: { [Op.like]: `%${word}%` }
+      }));
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────
+
   if (category) where.category = category;
 
   const brands = parseArray(brand);
@@ -146,8 +178,6 @@ router.get("/", cache(), catchAsync(async (req, res, next) => {
  *       404:
  *         description: Sản phẩm không tồn tại
  */
-// ✅ cache(60 * 10) — cache chi tiết sản phẩm lâu hơn (10 phút)
-// Vì detail thay đổi ít hơn danh sách
 router.get("/:id", cache(60 * 10), catchAsync(async (req, res, next) => {
   const product = await Product.findByPk(req.params.id, {
     include: [{
@@ -223,10 +253,7 @@ router.post("/", verifyToken, checkRole("admin"), catchAsync(async (req, res, ne
     await ProductSpec.bulkCreate(specsData.map(s => ({ ...s, productId: product.id })));
   }
 
-  // ✅ Xóa cache danh sách sản phẩm sau khi thêm mới
-  // Vì cache cũ không có sản phẩm này → FE sẽ thấy dữ liệu cũ nếu không xóa
   await clearCache("/api/products");
-
   return sendResponse(res, 201, "success", "Thêm sản phẩm thành công!", product);
 }));
 
@@ -284,9 +311,7 @@ router.put("/:id", verifyToken, checkRole("admin"), catchAsync(async (req, res, 
     await ProductSpec.bulkCreate(specsData.map(s => ({ ...s, productId: product.id })));
   }
 
-  // ✅ Xóa cache list + detail của sản phẩm này
   await clearCache("/api/products");
-
   return sendResponse(res, 200, "success", "Cập nhật sản phẩm thành công!", product);
 }));
 
@@ -316,9 +341,7 @@ router.delete("/:id", verifyToken, checkRole("admin"), catchAsync(async (req, re
   await ProductSpec.destroy({ where: { productId: product.id } });
   await product.destroy();
 
-  // ✅ Xóa cache sau khi xóa sản phẩm
   await clearCache("/api/products");
-
   return sendResponse(res, 200, "success", "Xóa sản phẩm thành công!");
 }));
 
