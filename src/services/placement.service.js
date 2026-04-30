@@ -1,22 +1,13 @@
-const { Op } = require("sequelize");
+const { Op }       = require("sequelize");
+const sequelize    = require("../config/db");
 const { Product, ProductPlacement } = require("../models/index");
-const AppError = require("../utils/AppError");
+const AppError     = require("../utils/AppError");
 
 const VALID_PLACEMENTS = ["homepage", "phones", "laptops", "flashsale"];
 
-// ─────────────────────────────────────────────
-// Private helper
-// Tính stockLeft từ stockLimit và stockSold
-// NULL stockLimit = không giới hạn
-// ─────────────────────────────────────────────
 const calcStockLeft = (stockLimit, stockSold) =>
   stockLimit !== null ? Math.max(0, stockLimit - stockSold) : null;
 
-// ─────────────────────────────────────────────
-// getPlacements(placement)
-// → item[] (dành cho FE user)
-// Flash sale: chỉ lấy những entry còn hạn
-// ─────────────────────────────────────────────
 exports.getPlacements = async (placement) => {
   if (!placement || !VALID_PLACEMENTS.includes(placement)) {
     throw new AppError("placement không hợp lệ", 400);
@@ -25,7 +16,6 @@ exports.getPlacements = async (placement) => {
   const now   = new Date();
   const where = { placement };
 
-  // Flash sale: lọc bỏ entry đã hết hạn
   if (placement === "flashsale") {
     where[Op.or] = [
       { saleEndAt: null },
@@ -40,7 +30,7 @@ exports.getPlacements = async (placement) => {
       {
         model:      Product,
         as:         "product",
-        where:      { status: "active" }, // chỉ hiện sản phẩm đang bán
+        where:      { status: "active" },
         attributes: [
           "id", "brand", "title", "img", "category", "price", "oldPrice",
           "discount", "stock", "sold", "avgRating", "totalReviews",
@@ -50,9 +40,9 @@ exports.getPlacements = async (placement) => {
   });
 
   return rows.map((p) => {
-    const item        = p.product.toJSON();
-    item.placementId  = p.id;
-    item.sortOrder    = p.sortOrder;
+    const item       = p.product.toJSON();
+    item.placementId = p.id;
+    item.sortOrder   = p.sortOrder;
 
     if (placement === "flashsale") {
       item.salePrice   = p.salePrice;
@@ -67,11 +57,6 @@ exports.getPlacements = async (placement) => {
   });
 };
 
-// ─────────────────────────────────────────────
-// getPlacementsAdmin(placement)
-// → ProductPlacement[] (dành cho admin panel)
-// Không filter thời gian — admin thấy tất cả
-// ─────────────────────────────────────────────
 exports.getPlacementsAdmin = async (placement) => {
   if (!placement || !VALID_PLACEMENTS.includes(placement)) {
     throw new AppError("placement không hợp lệ", 400);
@@ -98,10 +83,6 @@ exports.getPlacementsAdmin = async (placement) => {
   });
 };
 
-// ─────────────────────────────────────────────
-// createPlacement({ productId, placement, salePrice, saleStartAt, saleEndAt, stockLimit })
-// → ProductPlacement
-// ─────────────────────────────────────────────
 exports.createPlacement = async ({ productId, placement, salePrice, saleStartAt, saleEndAt, stockLimit }) => {
   if (!productId || !placement) {
     throw new AppError("Thiếu productId hoặc placement", 400);
@@ -121,7 +102,6 @@ exports.createPlacement = async ({ productId, placement, salePrice, saleStartAt,
     throw new AppError("Flash sale cần có salePrice", 400);
   }
 
-  // Tính sortOrder tiếp theo — đặt cuối danh sách
   const maxOrder = (await ProductPlacement.max("sortOrder", { where: { placement } })) || 0;
 
   return ProductPlacement.create({
@@ -138,11 +118,6 @@ exports.createPlacement = async ({ productId, placement, salePrice, saleStartAt,
   });
 };
 
-// ─────────────────────────────────────────────
-// reorderPlacements({ placement, items })
-// → void
-// items = [{ id, sortOrder }, ...]
-// ─────────────────────────────────────────────
 exports.reorderPlacements = async ({ placement, items }) => {
   if (!placement || !Array.isArray(items) || items.length === 0) {
     throw new AppError("Cần truyền placement và items[]", 400);
@@ -152,18 +127,27 @@ exports.reorderPlacements = async ({ placement, items }) => {
     throw new AppError("placement không hợp lệ", 400);
   }
 
-  await Promise.all(
-    items.map(({ id, sortOrder }) =>
-      ProductPlacement.update({ sortOrder }, { where: { id, placement } })
+  /*
+   * Bulk update bằng CASE WHEN thay vì N queries riêng lẻ.
+   * sequelize.escape() sanitize từng giá trị trước khi interpolate
+   * vào raw query để tránh SQL injection.
+   */
+  const cases = items
+    .map(({ id, sortOrder }) =>
+      `WHEN ${sequelize.escape(id)} THEN ${sequelize.escape(sortOrder)}`
     )
-  );
+    .join(" ");
+
+  const ids = items.map(({ id }) => sequelize.escape(id)).join(", ");
+
+  await sequelize.query(`
+    UPDATE product_placements
+    SET sortOrder = CASE id ${cases} END
+    WHERE id IN (${ids})
+    AND placement = ${sequelize.escape(placement)}
+  `);
 };
 
-// ─────────────────────────────────────────────
-// updatePlacement({ id, salePrice, saleStartAt, saleEndAt, stockLimit })
-// → { ...entry, stockLeft }
-// stockSold KHÔNG được update ở đây — chỉ tăng qua order transaction
-// ─────────────────────────────────────────────
 exports.updatePlacement = async ({ id, salePrice, saleStartAt, saleEndAt, stockLimit }) => {
   const entry = await ProductPlacement.findByPk(id);
   if (!entry) throw new AppError("Không tìm thấy placement", 404);
@@ -177,17 +161,12 @@ exports.updatePlacement = async ({ id, salePrice, saleStartAt, saleEndAt, stockL
     }),
   });
 
-  const result      = entry.toJSON();
-  result.stockLeft  = calcStockLeft(result.stockLimit, result.stockSold);
+  const result     = entry.toJSON();
+  result.stockLeft = calcStockLeft(result.stockLimit, result.stockSold);
 
   return result;
 };
 
-// ─────────────────────────────────────────────
-// resetStock(id)
-// → { id, stockSold, stockLimit, stockLeft }
-// Reset stockSold về 0 khi bắt đầu đợt flash sale mới
-// ─────────────────────────────────────────────
 exports.resetStock = async (id) => {
   const entry = await ProductPlacement.findByPk(id);
   if (!entry) throw new AppError("Không tìm thấy placement", 404);
@@ -198,15 +177,10 @@ exports.resetStock = async (id) => {
     id:         entry.id,
     stockSold:  0,
     stockLimit: entry.stockLimit,
-    stockLeft:  entry.stockLimit, // stockSold = 0 nên stockLeft = stockLimit
+    stockLeft:  entry.stockLimit,
   };
 };
 
-// ─────────────────────────────────────────────
-// deleteBulk(ids)
-// → { deleted }
-// Xóa nhiều placement cùng lúc
-// ─────────────────────────────────────────────
 exports.deleteBulk = async (ids) => {
   if (!Array.isArray(ids) || ids.length === 0) {
     throw new AppError("Cần truyền ids[]", 400);
@@ -216,10 +190,6 @@ exports.deleteBulk = async (ids) => {
   return { deleted };
 };
 
-// ─────────────────────────────────────────────
-// deletePlacement(id)
-// → void
-// ─────────────────────────────────────────────
 exports.deletePlacement = async (id) => {
   const entry = await ProductPlacement.findByPk(id);
   if (!entry) throw new AppError("Không tìm thấy placement", 404);
