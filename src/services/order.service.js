@@ -3,19 +3,19 @@ const sequelize = require("../config/db");
 const { Order, OrderItem, Product, ProductPlacement } = require("../models/index");
 const AppError  = require("../utils/AppError");
 
-// ─────────────────────────────────────────────
-// Private helper
-// DECIMAL từ MySQL trả về dạng string → parse về number
-// ─────────────────────────────────────────────
+const MAX_PAGE_LIMIT = 50;
+
 const parsePrice = (val) => {
   if (typeof val === "number") return val;
   return parseFloat(String(val).replace(/[^0-9.]/g, ""));
 };
 
-// ─────────────────────────────────────────────
-// createOrder({ userId, items, shippingInfo, payMethod })
-// → { orderId, totalAmount }
-// ─────────────────────────────────────────────
+const parseCursor = (cursor) => {
+  const ts = parseInt(cursor, 10);
+  if (isNaN(ts) || ts <= 0) throw new AppError("Invalid cursor", 400);
+  return new Date(ts);
+};
+
 exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
   if (!items || items.length === 0) {
     throw new AppError("Order must have at least 1 item", 400);
@@ -35,7 +35,6 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
     const orderItemsData = [];
 
     for (const item of items) {
-      // ── Lock row để tránh race condition oversell ────────────────────
       const product = await Product.findByPk(item.productId, {
         lock:        t.LOCK.UPDATE,
         transaction: t,
@@ -52,7 +51,6 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
         );
       }
 
-      // ── Flash sale: check stockLimit còn đủ không ───────────────────
       let flashPlacement = null;
       if (item.placementId) {
         flashPlacement = await ProductPlacement.findOne({
@@ -84,7 +82,6 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
         }
       }
 
-      // ── Tính giá: dùng salePrice nếu flash sale đang active ─────────
       let unitPrice = parsePrice(product.price);
       if (item.placementId && flashPlacement?.salePrice) {
         const now        = new Date();
@@ -106,7 +103,6 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
       });
     }
 
-    // ── Tạo Order ────────────────────────────────────────────────────
     const order = await Order.create(
       {
         userId,
@@ -120,13 +116,11 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
       { transaction: t }
     );
 
-    // ── Tạo OrderItems ───────────────────────────────────────────────
     await OrderItem.bulkCreate(
       orderItemsData.map((i) => ({ ...i, orderId: order.id })),
       { transaction: t }
     );
 
-    // ── Trừ stock, cộng sold ─────────────────────────────────────────
     for (const item of items) {
       await Product.increment(
         { stock: -item.quantity, sold: item.quantity },
@@ -134,7 +128,6 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
       );
     }
 
-    // ── Cộng stockSold flash sale ────────────────────────────────────
     for (const item of orderItemsData) {
       if (!item.placementId) continue;
 
@@ -156,16 +149,16 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
   };
 };
 
-// ─────────────────────────────────────────────
-// getMyOrders({ userId, limit, cursor })
-// → { data, hasMore, nextCursor }
-// Cursor-based pagination — tránh offset chậm khi data lớn
-// ─────────────────────────────────────────────
 exports.getMyOrders = async ({ userId, limit = 10, cursor = null }) => {
-  const where = { userId };
+  /*
+   * Cap limit để tránh client dump toàn bộ bảng trong 1 request.
+   * Validate cursor trước khi parse để tránh Invalid Date làm crash query.
+   */
+  const safeLimit = Math.min(Math.max(1, parseInt(limit, 10) || 10), MAX_PAGE_LIMIT);
 
+  const where = { userId };
   if (cursor) {
-    where.createdAt = { [Op.lt]: new Date(parseInt(cursor)) };
+    where.createdAt = { [Op.lt]: parseCursor(cursor) };
   }
 
   const orders = await Order.findAll({
@@ -185,10 +178,10 @@ exports.getMyOrders = async ({ userId, limit = 10, cursor = null }) => {
       },
     ],
     order: [["createdAt", "DESC"]],
-    limit: limit + 1, // lấy thêm 1 để biết còn trang tiếp không
+    limit: safeLimit + 1,
   });
 
-  const hasMore    = orders.length > limit;
+  const hasMore    = orders.length > safeLimit;
   const data       = hasMore ? orders.slice(0, -1) : orders;
   const nextCursor = hasMore
     ? data[data.length - 1].createdAt.getTime().toString()
@@ -197,10 +190,6 @@ exports.getMyOrders = async ({ userId, limit = 10, cursor = null }) => {
   return { data, hasMore, nextCursor };
 };
 
-// ─────────────────────────────────────────────
-// getOrderById({ orderId, requestUser })
-// → Order
-// ─────────────────────────────────────────────
 exports.getOrderById = async ({ orderId, requestUser }) => {
   const order = await Order.findOne({
     where:      { id: orderId },
@@ -222,7 +211,6 @@ exports.getOrderById = async ({ orderId, requestUser }) => {
 
   if (!order) throw new AppError("Order not found", 404);
 
-  // User chỉ xem được đơn của mình, admin xem được tất cả
   if (order.userId !== requestUser.id && requestUser.role !== "admin") {
     throw new AppError("Forbidden", 403);
   }
@@ -230,14 +218,8 @@ exports.getOrderById = async ({ orderId, requestUser }) => {
   return order;
 };
 
-// ─────────────────────────────────────────────
-// cancelOrder({ orderId, requestUser })
-// → void
-// Dùng atomic UPDATE để chống race condition double-cancel
-// ─────────────────────────────────────────────
 exports.cancelOrder = async ({ orderId, requestUser }) => {
   await sequelize.transaction(async (t) => {
-    // Lock row — chặn request đồng thời đọc cùng lúc
     const order = await Order.findByPk(orderId, {
       include:     [{ model: OrderItem }],
       lock:        t.LOCK.UPDATE,
@@ -258,8 +240,6 @@ exports.cancelOrder = async ({ orderId, requestUser }) => {
       throw new AppError("Order already cancelled", 400);
     }
 
-    // Atomic UPDATE — chỉ update nếu status vẫn còn cancellable
-    // Nếu request khác đã đổi status trước → affectedRows = 0 → throw
     const [affectedRows] = await Order.update(
       { status: "cancelled" },
       {
@@ -278,14 +258,12 @@ exports.cancelOrder = async ({ orderId, requestUser }) => {
       );
     }
 
-    // ── Hoàn stock + sold sau khi cancel ────────────────────────────
     for (const item of order.OrderItems) {
       await Product.increment(
         { stock: item.quantity, sold: -item.quantity },
         { where: { id: item.productId }, transaction: t }
       );
 
-      // Hoàn stockSold flash sale nếu đơn này mua qua flash sale
       if (item.placementId) {
         await ProductPlacement.increment(
           { stockSold: -item.quantity },
@@ -293,7 +271,7 @@ exports.cancelOrder = async ({ orderId, requestUser }) => {
             where: {
               id:        item.placementId,
               placement: "flashsale",
-              stockSold: { [Op.gte]: item.quantity }, // đảm bảo không âm
+              stockSold: { [Op.gte]: item.quantity },
             },
             transaction: t,
           }
@@ -303,13 +281,9 @@ exports.cancelOrder = async ({ orderId, requestUser }) => {
   });
 };
 
-// ─────────────────────────────────────────────
-// getAllOrders({ page, limit, status })
-// → { data, meta }
-// Admin only — offset pagination
-// ─────────────────────────────────────────────
 exports.getAllOrders = async ({ page = 1, limit = 20, status } = {}) => {
-  const offset        = (page - 1) * limit;
+  const safeLimit     = Math.min(Math.max(1, parseInt(limit, 10) || 20), MAX_PAGE_LIMIT);
+  const offset        = (page - 1) * safeLimit;
   const validStatuses = ["pending", "confirmed", "completed", "cancelled"];
 
   const where = {};
@@ -334,7 +308,7 @@ exports.getAllOrders = async ({ page = 1, limit = 20, status } = {}) => {
       },
     ],
     order:  [["createdAt", "DESC"]],
-    limit,
+    limit:  safeLimit,
     offset,
   });
 
@@ -343,17 +317,12 @@ exports.getAllOrders = async ({ page = 1, limit = 20, status } = {}) => {
     meta: {
       total:      count,
       page,
-      limit,
-      totalPages: Math.ceil(count / limit),
+      limit:      safeLimit,
+      totalPages: Math.ceil(count / safeLimit),
     },
   };
 };
 
-// ─────────────────────────────────────────────
-// updateOrderStatus({ orderId, newStatus })
-// → void
-// Admin only — hoàn stock tự động nếu admin cancel
-// ─────────────────────────────────────────────
 exports.updateOrderStatus = async ({ orderId, newStatus }) => {
   const validStatuses = ["pending", "confirmed", "completed", "cancelled"];
 
@@ -374,7 +343,6 @@ exports.updateOrderStatus = async ({ orderId, newStatus }) => {
       throw new AppError(`Cannot change status from "${order.status}"`, 400);
     }
 
-    // Hoàn stock nếu admin chuyển sang cancelled
     if (newStatus === "cancelled" && order.status !== "cancelled") {
       for (const item of order.OrderItems) {
         await Product.increment(
