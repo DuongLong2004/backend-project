@@ -1,22 +1,17 @@
-const { Op }    = require("sequelize");
+const { Op }         = require("sequelize");
+const sequelize      = require("../config/db");
 const { Product, ProductSpec } = require("../models/index");
-const AppError  = require("../utils/AppError");
+const AppError       = require("../utils/AppError");
 const { clearCache } = require("../middlewares/cache.middleware");
 
 const VALID_STATUSES = ["active", "draft", "outofstock"];
 
-// ─────────────────────────────────────────────
-// Private helpers
-// ─────────────────────────────────────────────
-
-// Tách chuỗi "Apple,Samsung" → ["Apple", "Samsung"]
 const parseArray = (val) => {
   if (!val) return [];
   if (Array.isArray(val)) return val.filter(Boolean);
   return val.split(",").map((s) => s.trim()).filter(Boolean);
 };
 
-// Build rows cho bảng product_specs từ các field thông số
 const buildSpecs = ({ display, screenTech, ram, rom, chip, camera, battery, charging, nation }) =>
   [
     { specKey: "display",    specValue: display,    sortOrder: 1 },
@@ -30,10 +25,13 @@ const buildSpecs = ({ display, screenTech, ram, rom, chip, camera, battery, char
     { specKey: "nation",     specValue: nation,     sortOrder: 9 },
   ].filter((s) => s.specValue);
 
-// ─────────────────────────────────────────────
-// getProducts(query)
-// → { data, meta }
-// ─────────────────────────────────────────────
+/**
+ * Strip MySQL FULLTEXT boolean operators khỏi input trước khi đưa vào
+ * MATCH AGAINST query để tránh syntax error và ngăn operator injection.
+ */
+const sanitizeFulltextSearch = (str) =>
+  str.replace(/[+\-><()~*"@]+/g, " ").trim();
+
 exports.getProducts = async (query) => {
   const page   = parseInt(query.page)  || 1;
   const limit  = parseInt(query.limit) || 10;
@@ -46,18 +44,24 @@ exports.getProducts = async (query) => {
     status,
   } = query;
 
-  const where = {};
+  const where      = {};
+  const extraWhere = [];
 
-  // Smart Search — tách keyword thành từng từ, mỗi từ phải có trong title (AND)
-  // VD: "iphone 15" → WHERE title LIKE '%iphone%' AND title LIKE '%15%'
   if (search && search.trim()) {
-    const words = search.trim().split(/\s+/).filter(Boolean);
-    if (words.length === 1) {
-      where.title = { [Op.like]: `%${words[0]}%` };
-    } else {
-      where[Op.and] = words.map((word) => ({
-        title: { [Op.like]: `%${word}%` },
-      }));
+    const sanitized = sanitizeFulltextSearch(search.trim());
+
+    if (sanitized) {
+      /*
+       * MATCH AGAINST thay vì LIKE '%...%'
+       * LIKE với wildcard prefix không dùng được index → full table scan
+       * FULLTEXT index (title, brand, description) đã tạo ở migration 20260430071036
+       * IN BOOLEAN MODE cho phép multi-word, không bị chặn bởi minimum word length
+       */
+      extraWhere.push(
+        sequelize.literal(
+          `MATCH(title, brand, description) AGAINST('${sanitized}' IN BOOLEAN MODE)`
+        )
+      );
     }
   }
 
@@ -74,7 +78,6 @@ exports.getProducts = async (query) => {
     where.price = { ...where.price, [Op.lte]: parseFloat(maxPrice) };
   }
 
-  // Filter thông số kỹ thuật — hỗ trợ multi-value "8 GB,12 GB"
   const addSpecFilter = (field, rawVal) => {
     const vals = parseArray(rawVal);
     if (!vals.length) return;
@@ -95,6 +98,10 @@ exports.getProducts = async (query) => {
     where.status = status;
   }
 
+  if (extraWhere.length > 0) {
+    where[Op.and] = [...(where[Op.and] || []), ...extraWhere];
+  }
+
   const { count, rows } = await Product.findAndCountAll({
     where,
     limit,
@@ -113,10 +120,6 @@ exports.getProducts = async (query) => {
   };
 };
 
-// ─────────────────────────────────────────────
-// getProductById(id)
-// → Product (kèm specs)
-// ─────────────────────────────────────────────
 exports.getProductById = async (id) => {
   const product = await Product.findByPk(id, {
     include: [
@@ -133,10 +136,6 @@ exports.getProductById = async (id) => {
   return product;
 };
 
-// ─────────────────────────────────────────────
-// createProduct(body)
-// → Product
-// ─────────────────────────────────────────────
 exports.createProduct = async (body) => {
   const {
     brand, title, img, discount, price, oldPrice,
@@ -169,10 +168,6 @@ exports.createProduct = async (body) => {
   return product;
 };
 
-// ─────────────────────────────────────────────
-// updateProduct(id, body)
-// → Product
-// ─────────────────────────────────────────────
 exports.updateProduct = async (id, body) => {
   const product = await Product.findByPk(id);
   if (!product) throw new AppError("Product not found", 404);
@@ -191,7 +186,7 @@ exports.updateProduct = async (id, body) => {
     ...(VALID_STATUSES.includes(status) && { status }),
   });
 
-  // Rebuild specs — xóa cũ rồi tạo mới
+  // Rebuild specs: xóa cũ → tạo mới để đảm bảo sync
   await ProductSpec.destroy({ where: { productId: product.id } });
   const specsData = buildSpecs({ display, screenTech, ram, rom, chip, camera, battery, charging, nation });
   if (specsData.length > 0) {
@@ -204,10 +199,6 @@ exports.updateProduct = async (id, body) => {
   return product;
 };
 
-// ─────────────────────────────────────────────
-// deleteProduct(id)
-// → void
-// ─────────────────────────────────────────────
 exports.deleteProduct = async (id) => {
   const product = await Product.findByPk(id);
   if (!product) throw new AppError("Product not found", 404);
