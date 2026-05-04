@@ -26,11 +26,27 @@ const buildSpecs = ({ display, screenTech, ram, rom, chip, camera, battery, char
   ].filter((s) => s.specValue);
 
 /**
- * Strip MySQL FULLTEXT boolean operators khỏi input trước khi đưa vào
- * MATCH AGAINST query để tránh syntax error và ngăn operator injection.
+ * Strip MySQL FULLTEXT boolean operators và ký tự nguy hiểm khỏi input
+ * trước khi đưa vào MATCH AGAINST query để tránh syntax error và SQL injection.
  */
 const sanitizeFulltextSearch = (str) =>
-  str.replace(/[+\-><()~*"@]+/g, " ").trim();
+  str.replace(/[+\-><()~*"@'\\]+/g, " ").trim();
+
+/**
+ * Chuyển search string thành FULLTEXT BOOLEAN MODE query với prefix wildcard.
+ * Mỗi từ được thêm `*` ở cuối → prefix match (gõ vài ký tự là ra kết quả).
+ * Mỗi từ có `+` ở đầu → AND logic (phải có tất cả các từ).
+ *
+ * Ví dụ: "iph 16" → "+iph* +16*"
+ */
+const toFulltextQuery = (str) => {
+  const sanitized = sanitizeFulltextSearch(str);
+  return sanitized
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => `+${word}*`)
+    .join(" ");
+};
 
 exports.getProducts = async (query) => {
   const page   = parseInt(query.page)  || 1;
@@ -48,18 +64,20 @@ exports.getProducts = async (query) => {
   const extraWhere = [];
 
   if (search && search.trim()) {
-    const sanitized = sanitizeFulltextSearch(search.trim());
+    const ftQuery = toFulltextQuery(search.trim());
 
-    if (sanitized) {
+    if (ftQuery) {
       /*
        * MATCH AGAINST thay vì LIKE '%...%'
        * LIKE với wildcard prefix không dùng được index → full table scan
        * FULLTEXT index (title, brand, description) đã tạo ở migration 20260430071036
-       * IN BOOLEAN MODE cho phép multi-word, không bị chặn bởi minimum word length
+       * IN BOOLEAN MODE + prefix wildcard (*) → gõ vài ký tự là match ngay
+       * sequelize.escape() để tránh SQL injection
        */
+      const escaped = sequelize.escape(ftQuery);
       extraWhere.push(
         sequelize.literal(
-          `MATCH(title, brand, description) AGAINST('${sanitized}' IN BOOLEAN MODE)`
+          `MATCH(title, brand, description) AGAINST(${escaped} IN BOOLEAN MODE)`
         )
       );
     }
