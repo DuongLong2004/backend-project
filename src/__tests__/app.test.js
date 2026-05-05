@@ -2,6 +2,10 @@ const request = require("supertest");
 const bcrypt  = require("bcrypt");
 const jwt     = require("jsonwebtoken");
 
+// ════════════════════════════════════════════════════════════════════════════
+// MOCKS
+// ════════════════════════════════════════════════════════════════════════════
+
 jest.mock("../../src/config/redis", () => ({
   client: {
     isReady: false,
@@ -92,9 +96,25 @@ jest.mock("../../src/middlewares/auth.middleware", () => ({
   },
 }));
 
-const app = require("../../src/app");
-const User = require("../../src/models/User");
+const app                  = require("../../src/app");
+const User                 = require("../../src/models/User");
 const { Order, OrderItem, Product, Review, Wishlist } = require("../../src/models/index");
+
+// ════════════════════════════════════════════════════════════════════════════
+// TEST CONSTANTS
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Password test data — phải pass validation:
+ *   - Tối thiểu 8 ký tự
+ *   - Có ít nhất 1 chữ cái và 1 số
+ */
+const VALID_PASSWORD   = "Test1234";
+const INVALID_PASSWORDS = {
+  TOO_SHORT:        "Test1",        // < 8 ký tự
+  NO_NUMBER:        "OnlyLetters",  // không có số
+  NO_LETTER:        "12345678",     // không có chữ cái
+};
 
 const generateRefreshToken = (userId) =>
   jwt.sign(
@@ -103,20 +123,22 @@ const generateRefreshToken = (userId) =>
     { expiresIn: "7d" }
   );
 
-// ============================================================
-// AUTH TESTS
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — REGISTER
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("POST /api/auth/register", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("should register successfully", async () => {
+  it("should register successfully with valid password", async () => {
     User.findOne.mockResolvedValue(null);
-    User.create.mockResolvedValue({ id: 1, name: "New User", email: "new@gmail.com", role: "user" });
+    User.create.mockResolvedValue({
+      id: 1, name: "New User", email: "new@gmail.com", role: "user",
+    });
 
     const res = await request(app)
       .post("/api/auth/register")
-      .send({ name: "New User", email: "new@gmail.com", password: "123456" });
+      .send({ name: "New User", email: "new@gmail.com", password: VALID_PASSWORD });
 
     expect(res.statusCode).toBe(201);
     expect(res.body.status).toBe("success");
@@ -127,7 +149,7 @@ describe("POST /api/auth/register", () => {
 
     const res = await request(app)
       .post("/api/auth/register")
-      .send({ name: "User", email: "existing@gmail.com", password: "123456" });
+      .send({ name: "User", email: "existing@gmail.com", password: VALID_PASSWORD });
 
     expect(res.statusCode).toBe(409);
     expect(res.body.message).toBe("Email already exists");
@@ -137,15 +159,49 @@ describe("POST /api/auth/register", () => {
     const res = await request(app)
       .post("/api/auth/register")
       .send({ email: "test@gmail.com" });
+
     expect(res.statusCode).toBe(400);
   });
+
+  // ─── Password Strength Tests (NEW) ──────────────────────────────────────
+
+  it("should return 400 if password too short (less than 8 chars)", async () => {
+    const res = await request(app)
+      .post("/api/auth/register")
+      .send({ name: "User", email: "test@gmail.com", password: INVALID_PASSWORDS.TOO_SHORT });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("ít nhất 8 ký tự");
+  });
+
+  it("should return 400 if password has no number", async () => {
+    const res = await request(app)
+      .post("/api/auth/register")
+      .send({ name: "User", email: "test@gmail.com", password: INVALID_PASSWORDS.NO_NUMBER });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("chữ cái và 1 số");
+  });
+
+  it("should return 400 if password has no letter", async () => {
+    const res = await request(app)
+      .post("/api/auth/register")
+      .send({ name: "User", email: "test@gmail.com", password: INVALID_PASSWORDS.NO_LETTER });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("chữ cái và 1 số");
+  });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — LOGIN
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("POST /api/auth/login", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should login successfully", async () => {
-    const hashedPassword = await bcrypt.hash("123456", 10);
+    const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
     User.findOne.mockResolvedValue({
       id: 1, name: "Test User", email: "test@gmail.com",
       password: hashedPassword, role: "user",
@@ -154,7 +210,7 @@ describe("POST /api/auth/login", () => {
 
     const res = await request(app)
       .post("/api/auth/login")
-      .send({ email: "test@gmail.com", password: "123456" });
+      .send({ email: "test@gmail.com", password: VALID_PASSWORD });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.data).toHaveProperty("accessToken");
@@ -163,23 +219,58 @@ describe("POST /api/auth/login", () => {
 
   it("should return 401 if email not found", async () => {
     User.findOne.mockResolvedValue(null);
-    const res = await request(app).post("/api/auth/login").send({ email: "wrong@gmail.com", password: "123456" });
+    const res = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "wrong@gmail.com", password: VALID_PASSWORD });
+
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe("Invalid email or password");
   });
 
   it("should return 401 if password wrong", async () => {
-    const hashedPassword = await bcrypt.hash("123456", 10);
-    User.findOne.mockResolvedValue({ id: 1, email: "test@gmail.com", password: hashedPassword, role: "user", update: jest.fn() });
-    const res = await request(app).post("/api/auth/login").send({ email: "test@gmail.com", password: "wrongpass" });
+    const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
+    User.findOne.mockResolvedValue({
+      id: 1, email: "test@gmail.com", password: hashedPassword, role: "user",
+      update: jest.fn(),
+    });
+
+    const res = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "test@gmail.com", password: "WrongPass1" });
+
     expect(res.statusCode).toBe(401);
   });
 
   it("should return 400 if fields missing", async () => {
-    const res = await request(app).post("/api/auth/login").send({ email: "test@gmail.com" });
+    const res = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "test@gmail.com" });
+
     expect(res.statusCode).toBe(400);
   });
+
+  // Backward compatibility test — user cũ với password yếu vẫn login được
+  it("should allow login with weak password (backward compat)", async () => {
+    // User cũ trong DB hash với password "123456" (yếu)
+    const oldHashedPassword = await bcrypt.hash("123456", 10);
+    User.findOne.mockResolvedValue({
+      id: 1, name: "Old User", email: "old@gmail.com",
+      password: oldHashedPassword, role: "user",
+      update: jest.fn().mockResolvedValue(true),
+    });
+
+    const res = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "old@gmail.com", password: "123456" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data).toHaveProperty("accessToken");
+  });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — REFRESH
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("POST /api/auth/refresh", () => {
   beforeEach(() => jest.clearAllMocks());
@@ -206,7 +297,9 @@ describe("POST /api/auth/refresh", () => {
   });
 
   it("should return 401 if refreshToken invalid", async () => {
-    const res = await request(app).post("/api/auth/refresh").send({ refreshToken: "invalid.token.here" });
+    const res = await request(app)
+      .post("/api/auth/refresh")
+      .send({ refreshToken: "invalid.token.here" });
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe("Invalid or expired refresh token");
   });
@@ -222,12 +315,32 @@ describe("POST /api/auth/refresh", () => {
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe("Refresh token has been revoked");
   });
+
+  // Test orphan token cleanup (NEW)
+  it("should cleanup orphan token if user not found", async () => {
+    const { getRefreshToken, deleteRefreshToken } = require("../../src/config/redis");
+    const refreshToken = generateRefreshToken(1);
+
+    getRefreshToken.mockResolvedValue(refreshToken);
+    User.findByPk.mockResolvedValue(null); // User đã bị xóa
+
+    const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body.message).toBe("User not found");
+    // Verify cleanup được gọi
+    expect(deleteRefreshToken).toHaveBeenCalledWith(1);
+  });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — LOGOUT (IDEMPOTENT)
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("POST /api/auth/logout", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("should logout successfully", async () => {
+  it("should logout successfully with valid token", async () => {
     const { getRefreshToken } = require("../../src/config/redis");
     const refreshToken = generateRefreshToken(1);
 
@@ -241,30 +354,44 @@ describe("POST /api/auth/logout", () => {
     expect(res.body.message).toBe("Logged out successfully");
   });
 
-  it("should return 400 if refreshToken missing", async () => {
+  // ─── Idempotent Tests (CHANGED from 400 to 200) ─────────────────────────
+
+  it("should return 200 even if refreshToken missing (idempotent)", async () => {
     const res = await request(app).post("/api/auth/logout").send({});
-    expect(res.statusCode).toBe(400);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toBe("Logged out successfully");
   });
 
-  it("should return 400 if refreshToken not found", async () => {
+  it("should return 200 even if refreshToken invalid (idempotent)", async () => {
+    const res = await request(app)
+      .post("/api/auth/logout")
+      .send({ refreshToken: "invalid.token.here" });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toBe("Logged out successfully");
+  });
+
+  it("should return 200 even if token already revoked (idempotent)", async () => {
     const { getRefreshToken } = require("../../src/config/redis");
+    const refreshToken = generateRefreshToken(1);
     getRefreshToken.mockResolvedValue(null);
 
-    const res = await request(app).post("/api/auth/logout").send({ refreshToken: "invalid.token" });
-    expect(res.statusCode).toBe(400);
-    expect(res.body.message).toBe("Invalid refresh token");
+    const res = await request(app).post("/api/auth/logout").send({ refreshToken });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toBe("Logged out successfully");
   });
 });
 
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 // USER TESTS
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("GET /api/users/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should return user by id (owner)", async () => {
-    User.findByPk.mockResolvedValue({ id: 1, name: "Test", email: "t@gmail.com", role: "user" });
+    User.findByPk.mockResolvedValue({
+      id: 1, name: "Test", email: "t@gmail.com", role: "user",
+    });
     const res = await request(app).get("/api/users/1");
     expect(res.statusCode).toBe(200);
     expect(res.body.status).toBe("success");
@@ -318,9 +445,9 @@ describe("DELETE /api/users/:id", () => {
   });
 });
 
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 // PRODUCT TESTS
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("GET /api/products", () => {
   beforeEach(() => jest.clearAllMocks());
@@ -358,7 +485,9 @@ describe("GET /api/products/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should return product detail", async () => {
-    Product.findByPk.mockResolvedValue({ id: 1, title: "iPhone 16", price: 33990000, specs: [] });
+    Product.findByPk.mockResolvedValue({
+      id: 1, title: "iPhone 16", price: 33990000, specs: [],
+    });
     const res = await request(app).get("/api/products/1");
     expect(res.statusCode).toBe(200);
   });
@@ -371,22 +500,26 @@ describe("GET /api/products/:id", () => {
   });
 });
 
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 // ORDER TESTS
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("POST /api/orders", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should create order successfully", async () => {
-    Product.findByPk.mockResolvedValue({ id: 1, title: "iPhone", price: 33990000, stock: 10 });
+    Product.findByPk.mockResolvedValue({
+      id: 1, title: "iPhone", price: 33990000, stock: 10,
+    });
     Order.create.mockResolvedValue({ id: 1, totalAmount: 67980000 });
     OrderItem.bulkCreate.mockResolvedValue([]);
     Product.increment.mockResolvedValue(true);
 
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 1, quantity: 2 }],
-      shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
+      shippingInfo: {
+        name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC",
+      },
     });
     expect(res.statusCode).toBe(201);
     expect(res.body.data).toHaveProperty("orderId");
@@ -402,16 +535,22 @@ describe("POST /api/orders", () => {
     Product.findByPk.mockResolvedValue(null);
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 999, quantity: 1 }],
-      shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
+      shippingInfo: {
+        name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC",
+      },
     });
     expect(res.statusCode).toBe(404);
   });
 
   it("should return 400 if out of stock", async () => {
-    Product.findByPk.mockResolvedValue({ id: 1, title: "iPhone", price: 33990000, stock: 0 });
+    Product.findByPk.mockResolvedValue({
+      id: 1, title: "iPhone", price: 33990000, stock: 0,
+    });
     const res = await request(app).post("/api/orders").send({
       items: [{ productId: 1, quantity: 5 }],
-      shippingInfo: { name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC" },
+      shippingInfo: {
+        name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC",
+      },
     });
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("chỉ còn");
@@ -444,7 +583,9 @@ describe("GET /api/orders/:id", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should return order detail", async () => {
-    Order.findOne.mockResolvedValue({ id: 1, userId: 1, status: "pending", OrderItems: [] });
+    Order.findOne.mockResolvedValue({
+      id: 1, userId: 1, status: "pending", OrderItems: [],
+    });
     const res = await request(app).get("/api/orders/1");
     expect(res.statusCode).toBe(200);
   });
@@ -456,7 +597,9 @@ describe("GET /api/orders/:id", () => {
   });
 
   it("should return 403 if not owner", async () => {
-    Order.findOne.mockResolvedValue({ id: 1, userId: 99, status: "pending", OrderItems: [] });
+    Order.findOne.mockResolvedValue({
+      id: 1, userId: 99, status: "pending", OrderItems: [],
+    });
     const res = await request(app).get("/api/orders/1");
     expect(res.statusCode).toBe(403);
   });
@@ -484,29 +627,35 @@ describe("PATCH /api/orders/:id/cancel", () => {
   });
 
   it("should return 400 if completed", async () => {
-    Order.findByPk.mockResolvedValue({ id: 1, userId: 1, status: "completed", OrderItems: [], update: jest.fn() });
+    Order.findByPk.mockResolvedValue({
+      id: 1, userId: 1, status: "completed", OrderItems: [], update: jest.fn(),
+    });
     const res = await request(app).patch("/api/orders/1/cancel");
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toBe("Cannot cancel a completed order");
   });
 
   it("should return 400 if already cancelled", async () => {
-    Order.findByPk.mockResolvedValue({ id: 1, userId: 1, status: "cancelled", OrderItems: [], update: jest.fn() });
+    Order.findByPk.mockResolvedValue({
+      id: 1, userId: 1, status: "cancelled", OrderItems: [], update: jest.fn(),
+    });
     const res = await request(app).patch("/api/orders/1/cancel");
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toBe("Order already cancelled");
   });
 
   it("should return 403 if not owner", async () => {
-    Order.findByPk.mockResolvedValue({ id: 1, userId: 99, status: "pending", OrderItems: [], update: jest.fn() });
+    Order.findByPk.mockResolvedValue({
+      id: 1, userId: 99, status: "pending", OrderItems: [], update: jest.fn(),
+    });
     const res = await request(app).patch("/api/orders/1/cancel");
     expect(res.statusCode).toBe(403);
   });
 });
 
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 // REVIEW TESTS
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("GET /api/products/:id/reviews", () => {
   beforeEach(() => jest.clearAllMocks());
@@ -546,7 +695,9 @@ describe("POST /api/products/:id/reviews", () => {
     Order.findOne.mockResolvedValue(null);
     const res = await request(app).post("/api/products/1/reviews").send({ rating: 5 });
     expect(res.statusCode).toBe(403);
-    expect(res.body.message).toBe("Bạn cần mua và nhận hàng thành công mới được đánh giá!");
+    expect(res.body.message).toBe(
+      "Bạn cần mua và nhận hàng thành công mới được đánh giá!"
+    );
   });
 
   it("should return 400 if already reviewed", async () => {
@@ -587,9 +738,9 @@ describe("DELETE /api/products/:id/reviews/:reviewId", () => {
   });
 });
 
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 // WISHLIST TESTS
-// ============================================================
+// ════════════════════════════════════════════════════════════════════════════
 
 describe("GET /api/wishlist", () => {
   beforeEach(() => jest.clearAllMocks());
