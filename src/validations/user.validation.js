@@ -12,17 +12,6 @@ const Joi = require("joi");
  *   - Tối đa 128 ký tự (chống DoS attack qua bcrypt)
  *   - Ít nhất 1 chữ cái (a-z hoặc A-Z)
  *   - Ít nhất 1 số (0-9)
- *
- * Regex breakdown:
- *   (?=.*[A-Za-z])  → positive lookahead: phải có chữ cái
- *   (?=.*\d)        → positive lookahead: phải có số
- *   .{8,}           → match toàn bộ password ≥ 8 ký tự
- *
- * Lý do KHÔNG bắt ký tự đặc biệt:
- *   - NIST 2024 khuyến nghị KHÔNG bắt buộc complexity rules cứng nhắc
- *   - User thường chọn pattern dễ đoán: Password1! → Welcome1!
- *   - Password dài (passphrase) an toàn hơn password ngắn có ký tự đặc biệt
- *   - UX tốt hơn → giảm reset password requests
  */
 const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
 
@@ -43,10 +32,6 @@ const passwordSchema = Joi.string()
 // USER SCHEMAS
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Schema cho POST /api/users (admin tạo user).
- * Áp dụng password policy mới.
- */
 exports.createUserSchema = Joi.object({
   name:     Joi.string().min(3).max(100).required(),
   email:    Joi.string().email().required(),
@@ -54,10 +39,6 @@ exports.createUserSchema = Joi.object({
   age:      Joi.number().integer().min(1).max(120).optional(),
 });
 
-/**
- * Schema cho PUT /api/users/:id.
- * Không cho update password qua route này — có route riêng.
- */
 exports.updateUserSchema = Joi.object({
   name: Joi.string().min(3).max(100),
   age:  Joi.number().integer().min(1).max(120),
@@ -69,40 +50,33 @@ exports.updateUserSchema = Joi.object({
 // AUTH SCHEMAS
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Schema cho POST /api/auth/login.
- *
- * @note KHÔNG validate password strength ở login.
- *       Lý do: User cũ đã đăng ký với password yếu (trước khi áp dụng
- *       policy mới) vẫn cần login được. Strength check chỉ áp dụng khi
- *       CREATE/CHANGE password.
- */
 exports.loginSchema = Joi.object({
   email:    Joi.string().email().required(),
   password: Joi.string().required(),
 });
 
-/**
- * Schema cho POST /api/auth/register.
- * Áp dụng password policy mới — bắt buộc password mạnh cho user mới.
- */
 exports.registerSchema = Joi.object({
   name:     Joi.string().min(3).max(100).required(),
   email:    Joi.string().email().required(),
   password: passwordSchema,
 });
 
+/**
+ * Schema cho POST /api/auth/resend-verification.
+ * Chỉ cần email — không cần password.
+ */
+exports.resendVerificationSchema = Joi.object({
+  email: Joi.string().email().required().messages({
+    "string.email":  "Email không hợp lệ",
+    "any.required":  "Email là bắt buộc",
+    "string.empty":  "Email không được để trống",
+  }),
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 // ORDER SCHEMAS
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Schema cho POST /api/orders.
- *
- * @note placementId allow(null) vì frontend gửi null khi sản phẩm không
- *       phải flash sale. Nếu không allow null → frontend phải xóa key,
- *       phức tạp hóa logic không cần thiết.
- */
 exports.createOrderSchema = Joi.object({
   items: Joi.array()
     .items(

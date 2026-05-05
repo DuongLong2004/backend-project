@@ -69,7 +69,16 @@ app.use((req, res) => {
 const errorMiddleware = require("./middlewares/error.middleware");
 app.use(errorMiddleware);
 
+/*
+ * Database sync — chỉ chạy ở development.
+ * Production phải dùng migrations để tránh duplicate indexes.
+ */
 const syncDB = async () => {
+  if (process.env.NODE_ENV === "production") {
+    console.log("-> Skip auto-sync in production. Use migrations instead.");
+    return;
+  }
+
   try {
     await sequelize.sync();
     console.log("-> Database synced");

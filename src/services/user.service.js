@@ -1,6 +1,9 @@
 const bcrypt   = require("bcrypt");
+const crypto   = require("crypto");
 const User     = require("../models/User");
 const AppError = require("../utils/AppError");
+const logger   = require("../utils/logger");
+const emailService = require("./email.service");
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -14,17 +17,44 @@ const AppError = require("../utils/AppError");
  */
 const BCRYPT_SALT_ROUNDS = 12;
 
+/**
+ * Verification token expiry — 24 giờ.
+ * @see src/services/auth.service.js
+ */
+const VERIFICATION_TOKEN_EXPIRES_MS = 24 * 60 * 60 * 1000;
+
+// ════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate verification token an toàn cho email verify flow.
+ * Duplicate logic từ auth.service.js để giữ user.service tự đứng được.
+ */
+const generateVerificationToken = () => crypto.randomBytes(32).toString("hex");
+
 // ════════════════════════════════════════════════════════════════════════════
 // CRUD OPERATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Tạo user mới (admin endpoint).
+ * Tạo user mới qua endpoint POST /api/users.
+ *
+ * Flow giống như register flow để giữ consistency:
+ *   1. Check email unique
+ *   2. Hash password (bcrypt 12)
+ *   3. Generate verification token + expiry
+ *   4. Create user với isVerified = false
+ *   5. Gửi email verify (best-effort)
  *
  * @param {Object} payload - User data đã validate qua Joi
  * @returns {Promise<Object>} User DTO không bao gồm password
  *
  * @throws {AppError} 400 nếu email đã tồn tại
+ *
+ * @design Endpoint /api/users (legacy) và /api/auth/register cùng tạo user
+ *         và đều gửi email verify. Frontend nên dùng /api/auth/register
+ *         vì đó là endpoint chuẩn cho authentication flow.
  */
 exports.createUser = async ({ name, email, password, age }) => {
   const existing = await User.findOne({ where: { email } });
@@ -33,19 +63,48 @@ exports.createUser = async ({ name, email, password, age }) => {
   }
 
   const hashed = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
-  const user   = await User.create({
+
+  // Generate verification token + expiry
+  const verificationToken          = generateVerificationToken();
+  const verificationTokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_EXPIRES_MS);
+
+  const user = await User.create({
     name,
     email,
     password: hashed,
     age,
     role: "user",
+    isVerified: false,
+    verificationToken,
+    verificationTokenExpiresAt,
   });
 
+  logger.info(`USER CREATED: email=${email} userId=${user.id}`);
+
+  /*
+   * Gửi email verify — best-effort.
+   * Wrap try-catch để KHÔNG throw lên controller.
+   * User dùng "Resend verification" nếu email gửi fail.
+   */
+  try {
+    await emailService.sendVerificationEmail({
+      to:       email,
+      userName: name,
+      token:    verificationToken,
+    });
+  } catch (err) {
+    logger.warn(
+      `EMAIL WARNING: Failed to send verification email to ${email}. ` +
+      `User can use "Resend verification" endpoint. Error: ${err.message}`
+    );
+  }
+
   return {
-    id:    user.id,
-    name:  user.name,
-    email: user.email,
-    age:   user.age,
+    id:         user.id,
+    name:       user.name,
+    email:      user.email,
+    age:        user.age,
+    isVerified: user.isVerified,
   };
 };
 
@@ -55,7 +114,7 @@ exports.createUser = async ({ name, email, password, age }) => {
  */
 exports.getUsers = async () => {
   return User.findAll({
-    attributes: ["id", "name", "email", "age", "role"],
+    attributes: ["id", "name", "email", "age", "role", "isVerified"],
   });
 };
 
@@ -69,18 +128,15 @@ exports.getUsers = async () => {
  * @throws {AppError} 403 nếu không phải owner và không phải admin
  * @throws {AppError} 404 nếu user không tồn tại
  *
- * @security Ownership check ở service layer thay vì route layer.
- *           Lý do: Service là Single Source of Truth cho business rules.
- *           Nếu thêm route mới gọi getUserById → tự động có authz check.
+ * @security Ownership check ở service layer (Single Source of Truth).
  */
 exports.getUserById = async (id, requester) => {
-  // parseInt vì id từ req.params là string, requester.id từ JWT là number
   if (requester.role !== "admin" && requester.id !== parseInt(id, 10)) {
     throw new AppError("Forbidden", 403);
   }
 
   const user = await User.findByPk(id, {
-    attributes: ["id", "name", "email", "age", "role"],
+    attributes: ["id", "name", "email", "age", "role", "isVerified"],
   });
 
   if (!user) {
@@ -92,13 +148,6 @@ exports.getUserById = async (id, requester) => {
 
 /**
  * Update user info.
- *
- * @param {number|string} id      - User ID cần update
- * @param {Object}        body    - Data cần update
- * @param {Object}        requester - User đang request
- *
- * @throws {AppError} 403 nếu không phải owner và không phải admin
- * @throws {AppError} 404 nếu user không tồn tại
  *
  * @security Strip role và password khỏi body để chống:
  *           - Privilege escalation (user tự đổi role thành admin)
@@ -114,7 +163,6 @@ exports.updateUser = async (id, body, requester) => {
     throw new AppError("User not found", 404);
   }
 
-  // Whitelist fields — destructure để loại role và password ra
   const { role, password, ...allowedData } = body;
   await user.update(allowedData);
 
@@ -130,8 +178,6 @@ exports.updateUser = async (id, body, requester) => {
  * Xóa user (admin only).
  *
  * @throws {AppError} 404 nếu user không tồn tại
- *
- * @todo Soft delete thay vì hard delete để giữ history cho orders/reviews?
  */
 exports.deleteUser = async (id) => {
   const user = await User.findByPk(id);
@@ -143,14 +189,6 @@ exports.deleteUser = async (id) => {
 
 /**
  * Đổi role của user (admin only).
- *
- * @param {number|string} targetId    - ID user cần đổi role
- * @param {string}        role        - Role mới (user|admin)
- * @param {number}        requesterId - ID admin đang thao tác
- *
- * @throws {AppError} 400 nếu role invalid
- * @throws {AppError} 403 nếu admin tự đổi role của chính mình
- * @throws {AppError} 404 nếu user không tồn tại
  *
  * @security Chặn admin tự demote chính mình → tránh case "lock out"
  *           khi chỉ có 1 admin trong hệ thống.

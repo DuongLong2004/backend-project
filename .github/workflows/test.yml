@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: 🧪 Run 55 Tests
+    name: 🧪 Run Tests
     runs-on: ubuntu-latest
 
     services:
@@ -53,3 +53,7 @@ jobs:
           CLIENT_URL: http://localhost:5173
           REDIS_HOST: localhost
           REDIS_PORT: 6379
+          # Email — fake credentials cho CI vì service đã được mock
+          EMAIL_USER: ci-test@gmail.com
+          EMAIL_PASSWORD: ci_test_password_fake
+          EMAIL_FROM_NAME: Backend Project CI

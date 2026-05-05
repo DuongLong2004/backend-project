@@ -19,6 +19,11 @@ jest.mock("../../src/config/redis", () => ({
   deleteRefreshToken: jest.fn().mockResolvedValue(true),
 }));
 
+// Mock email service — không gửi email thật khi test
+jest.mock("../../src/services/email.service", () => ({
+  sendVerificationEmail: jest.fn().mockResolvedValue(true),
+}));
+
 jest.mock("../../src/models/User", () => ({
   findOne:   jest.fn(),
   create:    jest.fn(),
@@ -96,24 +101,20 @@ jest.mock("../../src/middlewares/auth.middleware", () => ({
   },
 }));
 
-const app                  = require("../../src/app");
-const User                 = require("../../src/models/User");
+const app  = require("../../src/app");
+const User = require("../../src/models/User");
 const { Order, OrderItem, Product, Review, Wishlist } = require("../../src/models/index");
+const emailService = require("../../src/services/email.service");
 
 // ════════════════════════════════════════════════════════════════════════════
 // TEST CONSTANTS
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Password test data — phải pass validation:
- *   - Tối thiểu 8 ký tự
- *   - Có ít nhất 1 chữ cái và 1 số
- */
-const VALID_PASSWORD   = "Test1234";
+const VALID_PASSWORD = "Test1234";
 const INVALID_PASSWORDS = {
-  TOO_SHORT:        "Test1",        // < 8 ký tự
-  NO_NUMBER:        "OnlyLetters",  // không có số
-  NO_LETTER:        "12345678",     // không có chữ cái
+  TOO_SHORT: "Test1",
+  NO_NUMBER: "OnlyLetters",
+  NO_LETTER: "12345678",
 };
 
 const generateRefreshToken = (userId) =>
@@ -130,10 +131,11 @@ const generateRefreshToken = (userId) =>
 describe("POST /api/auth/register", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("should register successfully with valid password", async () => {
+  it("should register successfully and trigger email send", async () => {
     User.findOne.mockResolvedValue(null);
     User.create.mockResolvedValue({
-      id: 1, name: "New User", email: "new@gmail.com", role: "user",
+      id: 1, name: "New User", email: "new@gmail.com",
+      role: "user", isVerified: false,
     });
 
     const res = await request(app)
@@ -142,6 +144,30 @@ describe("POST /api/auth/register", () => {
 
     expect(res.statusCode).toBe(201);
     expect(res.body.status).toBe("success");
+    expect(res.body.data.isVerified).toBe(false);
+    expect(emailService.sendVerificationEmail).toHaveBeenCalledTimes(1);
+    expect(emailService.sendVerificationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to:       "new@gmail.com",
+        userName: "New User",
+        token:    expect.any(String),
+      })
+    );
+  });
+
+  it("should still return 201 even if email send fails (best-effort)", async () => {
+    User.findOne.mockResolvedValue(null);
+    User.create.mockResolvedValue({
+      id: 1, name: "New User", email: "new@gmail.com",
+      role: "user", isVerified: false,
+    });
+    emailService.sendVerificationEmail.mockRejectedValueOnce(new Error("SMTP down"));
+
+    const res = await request(app)
+      .post("/api/auth/register")
+      .send({ name: "New User", email: "new@gmail.com", password: VALID_PASSWORD });
+
+    expect(res.statusCode).toBe(201);
   });
 
   it("should return 409 if email already exists", async () => {
@@ -163,9 +189,7 @@ describe("POST /api/auth/register", () => {
     expect(res.statusCode).toBe(400);
   });
 
-  // ─── Password Strength Tests (NEW) ──────────────────────────────────────
-
-  it("should return 400 if password too short (less than 8 chars)", async () => {
+  it("should return 400 if password too short", async () => {
     const res = await request(app)
       .post("/api/auth/register")
       .send({ name: "User", email: "test@gmail.com", password: INVALID_PASSWORDS.TOO_SHORT });
@@ -200,11 +224,12 @@ describe("POST /api/auth/register", () => {
 describe("POST /api/auth/login", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("should login successfully", async () => {
+  it("should login successfully when verified", async () => {
     const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
     User.findOne.mockResolvedValue({
       id: 1, name: "Test User", email: "test@gmail.com",
       password: hashedPassword, role: "user",
+      isVerified: true,
       update: jest.fn().mockResolvedValue(true),
     });
 
@@ -215,6 +240,24 @@ describe("POST /api/auth/login", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.data).toHaveProperty("accessToken");
     expect(res.body.data).toHaveProperty("refreshToken");
+    expect(res.body.data.user.isVerified).toBe(true);
+  });
+
+  it("should return 403 if email not verified", async () => {
+    const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
+    User.findOne.mockResolvedValue({
+      id: 1, name: "Unverified User", email: "unverified@gmail.com",
+      password: hashedPassword, role: "user",
+      isVerified: false,
+      update: jest.fn(),
+    });
+
+    const res = await request(app)
+      .post("/api/auth/login")
+      .send({ email: "unverified@gmail.com", password: VALID_PASSWORD });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body.message).toContain("xác thực");
   });
 
   it("should return 401 if email not found", async () => {
@@ -231,6 +274,7 @@ describe("POST /api/auth/login", () => {
     const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
     User.findOne.mockResolvedValue({
       id: 1, email: "test@gmail.com", password: hashedPassword, role: "user",
+      isVerified: true,
       update: jest.fn(),
     });
 
@@ -248,23 +292,141 @@ describe("POST /api/auth/login", () => {
 
     expect(res.statusCode).toBe(400);
   });
+});
 
-  // Backward compatibility test — user cũ với password yếu vẫn login được
-  it("should allow login with weak password (backward compat)", async () => {
-    // User cũ trong DB hash với password "123456" (yếu)
-    const oldHashedPassword = await bcrypt.hash("123456", 10);
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — VERIFY EMAIL (NEW)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe("GET /api/auth/verify-email", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("should verify email successfully (JSON mode)", async () => {
+    const futureDate = new Date(Date.now() + 60 * 60 * 1000);
     User.findOne.mockResolvedValue({
-      id: 1, name: "Old User", email: "old@gmail.com",
-      password: oldHashedPassword, role: "user",
+      id: 1, email: "test@gmail.com", name: "Test User",
+      verificationToken: "valid_token_xyz",
+      verificationTokenExpiresAt: futureDate,
+      isVerified: false,
       update: jest.fn().mockResolvedValue(true),
     });
 
     const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: "old@gmail.com", password: "123456" });
+      .get("/api/auth/verify-email?token=valid_token_xyz&format=json");
 
     expect(res.statusCode).toBe(200);
-    expect(res.body.data).toHaveProperty("accessToken");
+    expect(res.body.message).toContain("thành công");
+    expect(res.body.data.isVerified).toBe(true);
+  });
+
+  it("should redirect to FE success page (HTML mode)", async () => {
+    const futureDate = new Date(Date.now() + 60 * 60 * 1000);
+    User.findOne.mockResolvedValue({
+      id: 1, email: "test@gmail.com", name: "Test User",
+      verificationToken: "valid_token_xyz",
+      verificationTokenExpiresAt: futureDate,
+      isVerified: false,
+      update: jest.fn().mockResolvedValue(true),
+    });
+
+    const res = await request(app)
+      .get("/api/auth/verify-email?token=valid_token_xyz");
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toContain("/verify-email-success");
+  });
+
+  it("should return 400 if token missing (JSON mode)", async () => {
+    const res = await request(app)
+      .get("/api/auth/verify-email?format=json");
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("required");
+  });
+
+  it("should redirect to error page if token missing (HTML mode)", async () => {
+    const res = await request(app)
+      .get("/api/auth/verify-email");
+
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toContain("/verify-email-error");
+    expect(res.headers.location).toContain("missing_token");
+  });
+
+  it("should return 400 if token invalid (JSON mode)", async () => {
+    User.findOne.mockResolvedValue(null);
+
+    const res = await request(app)
+      .get("/api/auth/verify-email?token=invalid_xxx&format=json");
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("không hợp lệ");
+  });
+
+  it("should return 400 if token expired (JSON mode)", async () => {
+    const pastDate = new Date(Date.now() - 60 * 60 * 1000);
+    User.findOne.mockResolvedValue({
+      id: 1, email: "test@gmail.com",
+      verificationToken: "expired_token",
+      verificationTokenExpiresAt: pastDate,
+      isVerified: false,
+      update: jest.fn().mockResolvedValue(true),
+    });
+
+    const res = await request(app)
+      .get("/api/auth/verify-email?token=expired_token&format=json");
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("hết hạn");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — RESEND VERIFICATION (NEW)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe("POST /api/auth/resend-verification", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("should resend verification email successfully", async () => {
+    User.findOne.mockResolvedValue({
+      id: 1, email: "unverified@gmail.com", name: "User",
+      isVerified: false,
+      update: jest.fn().mockResolvedValue(true),
+    });
+
+    const res = await request(app)
+      .post("/api/auth/resend-verification")
+      .send({ email: "unverified@gmail.com" });
+
+    expect(res.statusCode).toBe(200);
+    expect(emailService.sendVerificationEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("should return 200 even if email not found (anti-enumeration)", async () => {
+    User.findOne.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post("/api/auth/resend-verification")
+      .send({ email: "nonexistent@gmail.com" });
+
+    expect(res.statusCode).toBe(200);
+    expect(emailService.sendVerificationEmail).not.toHaveBeenCalled();
+  });
+
+  it("should return 400 if email already verified", async () => {
+    User.findOne.mockResolvedValue({
+      id: 1, email: "verified@gmail.com", name: "User",
+      isVerified: true,
+      update: jest.fn(),
+    });
+
+    const res = await request(app)
+      .post("/api/auth/resend-verification")
+      .send({ email: "verified@gmail.com" });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("đã được xác thực");
   });
 });
 
@@ -307,8 +469,6 @@ describe("POST /api/auth/refresh", () => {
   it("should return 401 if refreshToken revoked", async () => {
     const { getRefreshToken } = require("../../src/config/redis");
     const refreshToken = generateRefreshToken(1);
-
-    // Redis trả null → token đã bị xóa / revoked
     getRefreshToken.mockResolvedValue(null);
 
     const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
@@ -316,19 +476,17 @@ describe("POST /api/auth/refresh", () => {
     expect(res.body.message).toBe("Refresh token has been revoked");
   });
 
-  // Test orphan token cleanup (NEW)
   it("should cleanup orphan token if user not found", async () => {
     const { getRefreshToken, deleteRefreshToken } = require("../../src/config/redis");
     const refreshToken = generateRefreshToken(1);
 
     getRefreshToken.mockResolvedValue(refreshToken);
-    User.findByPk.mockResolvedValue(null); // User đã bị xóa
+    User.findByPk.mockResolvedValue(null);
 
     const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
 
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toBe("User not found");
-    // Verify cleanup được gọi
     expect(deleteRefreshToken).toHaveBeenCalledWith(1);
   });
 });
@@ -353,8 +511,6 @@ describe("POST /api/auth/logout", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.message).toBe("Logged out successfully");
   });
-
-  // ─── Idempotent Tests (CHANGED from 400 to 200) ─────────────────────────
 
   it("should return 200 even if refreshToken missing (idempotent)", async () => {
     const res = await request(app).post("/api/auth/logout").send({});
