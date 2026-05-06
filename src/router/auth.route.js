@@ -3,25 +3,43 @@ const router     = express.Router();
 const rateLimit  = require("express-rate-limit");
 const authController = require("../controllers/auth.controller");
 const validate       = require("../middlewares/validate.middleware");
-const { registerSchema, loginSchema } = require("../validations/user.validation");
+const {
+  registerSchema,
+  loginSchema,
+  resendVerificationSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} = require("../validations/user.validation");
 
 // ════════════════════════════════════════════════════════════════════════════
 // RATE LIMITERS
 // ════════════════════════════════════════════════════════════════════════════
 
+/*
+ * Test environment: skip rate limiter để tránh test bị "dính" 429
+ * khi test sau gửi nhiều request liên tiếp đến cùng endpoint.
+ *
+ * Production và development: rate limiter chạy bình thường.
+ */
+const isTest = process.env.NODE_ENV === "test";
+
+const noopLimiter = (req, res, next) => next();
+
 /**
  * Rate limit cho login: 5 lần / 15 phút / IP.
  * Chống brute force attack.
  */
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max:      5,
-  message:  {
-    status:  "error",
-    message: "Too many login attempts, please try again after 15 minutes",
-    data:    null,
-  },
-});
+const loginLimiter = isTest
+  ? noopLimiter
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max:      5,
+      message:  {
+        status:  "error",
+        message: "Too many login attempts, please try again after 15 minutes",
+        data:    null,
+      },
+    });
 
 /**
  * Rate limit cho resend verification: 3 lần / 15 phút / IP.
@@ -29,17 +47,58 @@ const loginLimiter = rateLimit({
  * Lý do strict hơn login:
  *   - Mỗi resend = 1 email gửi → Gmail free tier 500/day
  *   - Chống spam attacker dùng để spam email user khác
- *   - User legitimate chỉ cần resend 1-2 lần là đủ
  */
-const resendVerificationLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max:      3,
-  message:  {
-    status:  "error",
-    message: "Bạn đã yêu cầu gửi lại email quá nhiều lần. Vui lòng thử lại sau 15 phút.",
-    data:    null,
-  },
-});
+const resendVerificationLimiter = isTest
+  ? noopLimiter
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max:      3,
+      message:  {
+        status:  "error",
+        message: "Bạn đã yêu cầu gửi lại email quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+        data:    null,
+      },
+    });
+
+/**
+ * Rate limit cho forgot password: 3 lần / 15 phút / IP.
+ *
+ * Strict vì:
+ *   - Mỗi request = 1 email gửi → tránh quota Gmail
+ *   - Chống attacker spam email user khác
+ *   - Chống enumeration attack tốc độ cao
+ */
+const forgotPasswordLimiter = isTest
+  ? noopLimiter
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max:      3,
+      message:  {
+        status:  "error",
+        message: "Bạn đã yêu cầu đặt lại mật khẩu quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+        data:    null,
+      },
+    });
+
+/**
+ * Rate limit cho reset password: 5 lần / 15 phút / IP.
+ *
+ * Lý do tách riêng:
+ *   - Endpoint này không gửi email, chỉ verify token
+ *   - User legit có thể nhập sai password mới (yêu cầu confirm)
+ *   - Vẫn cần limit để chống brute force token
+ */
+const resetPasswordLimiter = isTest
+  ? noopLimiter
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max:      5,
+      message:  {
+        status:  "error",
+        message: "Quá nhiều lần thử. Vui lòng thử lại sau 15 phút.",
+        data:    null,
+      },
+    });
 
 // ════════════════════════════════════════════════════════════════════════════
 // SWAGGER DOCS
@@ -121,20 +180,6 @@ router.post("/login", loginLimiter, validate(loginSchema), authController.login)
  *   post:
  *     summary: Refresh access token
  *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               refreshToken:
- *                 type: string
- *     responses:
- *       200:
- *         description: Trả về accessToken + refreshToken mới
- *       401:
- *         description: Token không hợp lệ hoặc đã bị revoke
  */
 router.post("/refresh", authController.refresh);
 
@@ -144,17 +189,6 @@ router.post("/refresh", authController.refresh);
  *   post:
  *     summary: Đăng xuất (idempotent — luôn trả 200)
  *     tags: [Auth]
- *     requestBody:
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               refreshToken:
- *                 type: string
- *     responses:
- *       200:
- *         description: Đăng xuất thành công
  */
 router.post("/logout", authController.logout);
 
@@ -168,22 +202,15 @@ router.post("/logout", authController.logout);
  *       - in: query
  *         name: token
  *         required: true
- *         schema:
- *           type: string
+ *         schema: { type: string }
  *       - in: query
  *         name: format
  *         required: false
- *         schema:
- *           type: string
- *           enum: [json]
- *         description: "Truyền 'json' để nhận JSON response thay vì redirect"
+ *         schema: { type: string, enum: [json] }
  *     responses:
- *       200:
- *         description: Verify thành công (JSON mode)
- *       302:
- *         description: Redirect về FE success/error page
- *       400:
- *         description: Token invalid hoặc hết hạn (JSON mode)
+ *       200: { description: Verify thành công (JSON mode) }
+ *       302: { description: Redirect về FE success/error page }
+ *       400: { description: Token invalid hoặc hết hạn (JSON mode) }
  */
 router.get("/verify-email", authController.verifyEmail);
 
@@ -201,21 +228,80 @@ router.get("/verify-email", authController.verifyEmail);
  *             type: object
  *             required: [email]
  *             properties:
- *               email:
- *                 type: string
- *                 example: duonglong@gmail.com
+ *               email: { type: string, example: duonglong@gmail.com }
  *     responses:
- *       200:
- *         description: Email đã gửi (hoặc email không tồn tại — luôn 200)
- *       400:
- *         description: Email đã được xác thực rồi
- *       429:
- *         description: Quá nhiều yêu cầu, vui lòng thử lại sau 15 phút
+ *       200: { description: Email đã gửi (hoặc email không tồn tại — luôn 200) }
+ *       400: { description: Email đã được xác thực rồi }
+ *       429: { description: Quá nhiều yêu cầu }
  */
 router.post(
   "/resend-verification",
   resendVerificationLimiter,
+  validate(resendVerificationSchema),
   authController.resendVerification
+);
+
+/**
+ * @swagger
+ * /api/auth/forgot-password:
+ *   post:
+ *     summary: Yêu cầu đặt lại mật khẩu (gửi email reset link)
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email]
+ *             properties:
+ *               email: { type: string, example: duonglong@gmail.com }
+ *     responses:
+ *       200:
+ *         description: Email reset đã gửi (hoặc email không tồn tại — luôn 200)
+ *       429:
+ *         description: Quá nhiều yêu cầu, vui lòng thử lại sau 15 phút
+ */
+router.post(
+  "/forgot-password",
+  forgotPasswordLimiter,
+  validate(forgotPasswordSchema),
+  authController.forgotPassword
+);
+
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Đặt lại mật khẩu mới với token từ email
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token, newPassword]
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 example: a1b2c3d4e5f6...
+ *               newPassword:
+ *                 type: string
+ *                 example: NewPass1234
+ *     responses:
+ *       200:
+ *         description: Đặt lại mật khẩu thành công, all sessions revoked
+ *       400:
+ *         description: Token invalid/expired hoặc password không hợp lệ
+ *       429:
+ *         description: Quá nhiều lần thử
+ */
+router.post(
+  "/reset-password",
+  resetPasswordLimiter,
+  validate(resetPasswordSchema),
+  authController.resetPassword
 );
 
 module.exports = router;

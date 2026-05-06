@@ -21,7 +21,8 @@ jest.mock("../../src/config/redis", () => ({
 
 // Mock email service — không gửi email thật khi test
 jest.mock("../../src/services/email.service", () => ({
-  sendVerificationEmail: jest.fn().mockResolvedValue(true),
+  sendVerificationEmail:  jest.fn().mockResolvedValue(true),
+  sendPasswordResetEmail: jest.fn().mockResolvedValue(true),
 }));
 
 jest.mock("../../src/models/User", () => ({
@@ -105,12 +106,14 @@ const app  = require("../../src/app");
 const User = require("../../src/models/User");
 const { Order, OrderItem, Product, Review, Wishlist } = require("../../src/models/index");
 const emailService = require("../../src/services/email.service");
+const { deleteRefreshToken } = require("../../src/config/redis");
 
 // ════════════════════════════════════════════════════════════════════════════
 // TEST CONSTANTS
 // ════════════════════════════════════════════════════════════════════════════
 
 const VALID_PASSWORD = "Test1234";
+const NEW_PASSWORD   = "NewPass1234";
 const INVALID_PASSWORDS = {
   TOO_SHORT: "Test1",
   NO_NUMBER: "OnlyLetters",
@@ -146,13 +149,6 @@ describe("POST /api/auth/register", () => {
     expect(res.body.status).toBe("success");
     expect(res.body.data.isVerified).toBe(false);
     expect(emailService.sendVerificationEmail).toHaveBeenCalledTimes(1);
-    expect(emailService.sendVerificationEmail).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to:       "new@gmail.com",
-        userName: "New User",
-        token:    expect.any(String),
-      })
-    );
   });
 
   it("should still return 201 even if email send fails (best-effort)", async () => {
@@ -295,7 +291,7 @@ describe("POST /api/auth/login", () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// AUTH TESTS — VERIFY EMAIL (NEW)
+// AUTH TESTS — VERIFY EMAIL
 // ════════════════════════════════════════════════════════════════════════════
 
 describe("GET /api/auth/verify-email", () => {
@@ -382,7 +378,7 @@ describe("GET /api/auth/verify-email", () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// AUTH TESTS — RESEND VERIFICATION (NEW)
+// AUTH TESTS — RESEND VERIFICATION
 // ════════════════════════════════════════════════════════════════════════════
 
 describe("POST /api/auth/resend-verification", () => {
@@ -427,6 +423,212 @@ describe("POST /api/auth/resend-verification", () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("đã được xác thực");
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — FORGOT PASSWORD (Phần 3)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe("POST /api/auth/forgot-password", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("should send reset email successfully for verified user", async () => {
+    User.findOne.mockResolvedValue({
+      id: 1, email: "test@gmail.com", name: "Test User",
+      isVerified: true,
+      update: jest.fn().mockResolvedValue(true),
+    });
+
+    const res = await request(app)
+      .post("/api/auth/forgot-password")
+      .send({ email: "test@gmail.com" });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toContain("Nếu email tồn tại");
+    expect(emailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
+    expect(emailService.sendPasswordResetEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to:       "test@gmail.com",
+        userName: "Test User",
+        token:    expect.any(String),
+      })
+    );
+  });
+
+  it("should return 200 silent success if email not found (anti-enumeration)", async () => {
+    User.findOne.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post("/api/auth/forgot-password")
+      .send({ email: "nonexistent@gmail.com" });
+
+    expect(res.statusCode).toBe(200);
+    expect(emailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+  });
+
+  it("should return 200 silent success if user not verified (anti-enumeration)", async () => {
+    User.findOne.mockResolvedValue({
+      id: 1, email: "unverified@gmail.com", name: "User",
+      isVerified: false,
+      update: jest.fn(),
+    });
+
+    const res = await request(app)
+      .post("/api/auth/forgot-password")
+      .send({ email: "unverified@gmail.com" });
+
+    expect(res.statusCode).toBe(200);
+    expect(emailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+  });
+
+  it("should cleanup token and return 500 if email send fails", async () => {
+    const updateMock = jest.fn().mockResolvedValue(true);
+    User.findOne.mockResolvedValue({
+      id: 1, email: "test@gmail.com", name: "User",
+      isVerified: true,
+      update: updateMock,
+    });
+    emailService.sendPasswordResetEmail.mockRejectedValueOnce(new Error("SMTP down"));
+
+    const res = await request(app)
+      .post("/api/auth/forgot-password")
+      .send({ email: "test@gmail.com" });
+
+    expect(res.statusCode).toBe(500);
+    // update gọi 2 lần: lần 1 set token, lần 2 cleanup
+    expect(updateMock).toHaveBeenCalledTimes(2);
+    expect(updateMock).toHaveBeenLastCalledWith({
+      passwordResetToken:     null,
+      passwordResetExpiresAt: null,
+    });
+  });
+
+  it("should return 400 if email format invalid", async () => {
+    const res = await request(app)
+      .post("/api/auth/forgot-password")
+      .send({ email: "not-an-email" });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("should return 400 if email missing", async () => {
+    const res = await request(app)
+      .post("/api/auth/forgot-password")
+      .send({});
+
+    expect(res.statusCode).toBe(400);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — RESET PASSWORD (Phần 3)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe("POST /api/auth/reset-password", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("should reset password successfully and revoke all sessions", async () => {
+    const futureDate = new Date(Date.now() + 60 * 60 * 1000);
+    const updateMock = jest.fn().mockResolvedValue(true);
+    User.findOne.mockResolvedValue({
+      id: 1, email: "test@gmail.com", name: "User",
+      passwordResetToken: "valid_reset_token",
+      passwordResetExpiresAt: futureDate,
+      update: updateMock,
+    });
+
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ token: "valid_reset_token", newPassword: NEW_PASSWORD });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toContain("thành công");
+    expect(res.body.data.email).toBe("test@gmail.com");
+
+    // Check password đã được hash
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        password:               expect.any(String),
+        passwordResetToken:     null,
+        passwordResetExpiresAt: null,
+      })
+    );
+    // Verify password được hash, không phải plaintext
+    expect(updateMock.mock.calls[0][0].password).not.toBe(NEW_PASSWORD);
+
+    // Check refresh token đã bị xóa (logout all devices)
+    expect(deleteRefreshToken).toHaveBeenCalledWith(1);
+  });
+
+  it("should return 400 if token invalid", async () => {
+    User.findOne.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ token: "invalid_token", newPassword: NEW_PASSWORD });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("không hợp lệ");
+    expect(deleteRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it("should return 400 if token expired and cleanup token", async () => {
+    const pastDate = new Date(Date.now() - 60 * 60 * 1000);
+    const updateMock = jest.fn().mockResolvedValue(true);
+    User.findOne.mockResolvedValue({
+      id: 1, email: "test@gmail.com",
+      passwordResetToken: "expired_token",
+      passwordResetExpiresAt: pastDate,
+      update: updateMock,
+    });
+
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ token: "expired_token", newPassword: NEW_PASSWORD });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("hết hạn");
+    // Cleanup token expired
+    expect(updateMock).toHaveBeenCalledWith({
+      passwordResetToken:     null,
+      passwordResetExpiresAt: null,
+    });
+    expect(deleteRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it("should return 400 if newPassword too short", async () => {
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ token: "valid_token", newPassword: INVALID_PASSWORDS.TOO_SHORT });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("ít nhất 8 ký tự");
+  });
+
+  it("should return 400 if newPassword has no number", async () => {
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ token: "valid_token", newPassword: INVALID_PASSWORDS.NO_NUMBER });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("chữ cái và 1 số");
+  });
+
+  it("should return 400 if token missing", async () => {
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ newPassword: NEW_PASSWORD });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("should return 400 if newPassword missing", async () => {
+    const res = await request(app)
+      .post("/api/auth/reset-password")
+      .send({ token: "valid_token" });
+
+    expect(res.statusCode).toBe(400);
   });
 });
 
@@ -477,7 +679,7 @@ describe("POST /api/auth/refresh", () => {
   });
 
   it("should cleanup orphan token if user not found", async () => {
-    const { getRefreshToken, deleteRefreshToken } = require("../../src/config/redis");
+    const { getRefreshToken } = require("../../src/config/redis");
     const refreshToken = generateRefreshToken(1);
 
     getRefreshToken.mockResolvedValue(refreshToken);

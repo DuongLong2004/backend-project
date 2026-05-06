@@ -73,6 +73,30 @@ exports.resendVerificationSchema = Joi.object({
   }),
 });
 
+/**
+ * Schema cho POST /api/auth/forgot-password.
+ * Chỉ cần email — gửi link reset về email user.
+ */
+exports.forgotPasswordSchema = Joi.object({
+  email: Joi.string().email().required().messages({
+    "string.email":  "Email không hợp lệ",
+    "any.required":  "Email là bắt buộc",
+    "string.empty":  "Email không được để trống",
+  }),
+});
+
+/**
+ * Schema cho POST /api/auth/reset-password.
+ * Cần token từ URL email + mật khẩu mới (apply password policy chung).
+ */
+exports.resetPasswordSchema = Joi.object({
+  token: Joi.string().required().messages({
+    "any.required": "Token là bắt buộc",
+    "string.empty": "Token không được để trống",
+  }),
+  newPassword: passwordSchema,
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 // ORDER SCHEMAS
 // ════════════════════════════════════════════════════════════════════════════

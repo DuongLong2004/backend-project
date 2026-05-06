@@ -16,13 +16,7 @@ const FROM_NAME    = process.env.EMAIL_FROM_NAME || "Backend Project";
 const FROM_ADDRESS = process.env.EMAIL_USER;
 
 /**
- * Frontend URL — base URL để generate verify link.
- *
- * Flow:
- *   1. BE generate URL: {FRONTEND_URL}/verify-email?token=xxx
- *   2. User click link trong email → mở FE
- *   3. FE đọc token từ query string → call API: GET /api/auth/verify-email?token=xxx
- *   4. BE verify token → redirect về FE: {FRONTEND_URL}/verify-email-success
+ * Frontend URL — base URL để generate verify/reset link.
  *
  * Mặc định: http://localhost:5173 (Vite default port)
  */
@@ -121,6 +115,100 @@ const buildVerifyEmailHtml = ({ userName, verifyUrl, expiresHours }) => `
 </html>
 `;
 
+/**
+ * HTML template cho email reset password.
+ *
+ * @param {Object} options
+ * @param {string} options.userName     - Tên user nhận email
+ * @param {string} options.resetUrl     - Link đầy đủ kèm token
+ * @param {number} options.expiresMinutes - Số phút token còn hiệu lực
+ * @returns {string} HTML content
+ *
+ * @design Màu đỏ/cam thay vì purple để user PHÂN BIỆT với email verify.
+ *         Dùng warning style để nhấn mạnh tính bảo mật.
+ */
+const buildResetPasswordEmailHtml = ({ userName, resetUrl, expiresMinutes }) => `
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Đặt lại mật khẩu</title>
+</head>
+<body style="margin:0;padding:0;font-family:Arial,sans-serif;background-color:#f4f4f4;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f4;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#DC2626;padding:30px;text-align:center;border-radius:8px 8px 0 0;">
+              <h1 style="color:#ffffff;margin:0;font-size:24px;">🔐 Đặt lại mật khẩu</h1>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px 30px;">
+              <h2 style="color:#333333;margin:0 0 20px 0;">Xin chào ${userName}! 👋</h2>
+
+              <p style="color:#666666;font-size:16px;line-height:1.6;margin:0 0 20px 0;">
+                Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn tại
+                <strong>Backend Project</strong>. Click vào nút dưới đây để tạo mật khẩu mới:
+              </p>
+
+              <!-- CTA Button -->
+              <table cellpadding="0" cellspacing="0" style="margin:30px 0;">
+                <tr>
+                  <td style="border-radius:6px;background-color:#DC2626;">
+                    <a href="${resetUrl}"
+                       style="display:inline-block;padding:14px 32px;color:#ffffff;text-decoration:none;font-weight:bold;font-size:16px;">
+                      🔑 Đặt lại mật khẩu ngay
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="color:#666666;font-size:14px;line-height:1.6;margin:20px 0 0 0;">
+                Hoặc copy link sau vào trình duyệt:
+              </p>
+              <p style="background-color:#f9f9f9;padding:12px;border-radius:4px;word-break:break-all;font-size:13px;color:#DC2626;">
+                ${resetUrl}
+              </p>
+
+              <div style="border-top:1px solid #eeeeee;margin:30px 0;"></div>
+
+              <!-- Warning box -->
+              <div style="background-color:#FEF2F2;border-left:4px solid #DC2626;padding:16px;border-radius:4px;margin:20px 0;">
+                <p style="color:#991B1B;font-size:13px;line-height:1.6;margin:0;">
+                  ⚠️ <strong>Lưu ý bảo mật:</strong><br>
+                  • Link đặt lại mật khẩu chỉ có hiệu lực trong <strong>${expiresMinutes} phút</strong>.<br>
+                  • Sau khi đặt lại, tất cả phiên đăng nhập trên các thiết bị khác sẽ bị đăng xuất.<br>
+                  • Nếu bạn KHÔNG yêu cầu đặt lại mật khẩu, vui lòng bỏ qua email này
+                  và đổi mật khẩu ngay nếu nghi ngờ tài khoản bị xâm nhập.
+                </p>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f9f9f9;padding:20px 30px;text-align:center;border-radius:0 0 8px 8px;">
+              <p style="color:#999999;font-size:12px;margin:0;">
+                © 2026 Backend Project. Email tự động — vui lòng không reply.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+`;
+
 // ════════════════════════════════════════════════════════════════════════════
 // EMAIL SENDERS
 // ════════════════════════════════════════════════════════════════════════════
@@ -172,5 +260,44 @@ exports.sendVerificationEmail = async ({ to, userName, token }) => {
   } catch (err) {
     logger.error(`EMAIL FAILED: verify to=${to} error=${err.message}`);
     throw err; // Caller quyết định xử lý
+  }
+};
+
+/**
+ * Gửi email reset password.
+ *
+ * @param {Object} payload
+ * @param {string} payload.to        - Email người nhận
+ * @param {string} payload.userName  - Tên user (hiển thị trong email)
+ * @param {string} payload.token     - Password reset token
+ *
+ * @returns {Promise<void>}
+ *
+ * @throws {Error} Nếu gửi email fail. Caller (auth.service.forgotPassword)
+ *                 sẽ catch và log — return success cho user (anti-enumeration).
+ *
+ * @design FE URL: /reset-password?token=xxx
+ *         Token expire 1h (60 phút) → nhấn mạnh trong email template.
+ */
+exports.sendPasswordResetEmail = async ({ to, userName, token }) => {
+  const resetUrl = `${FRONTEND_URL}/reset-password?token=${token}`;
+
+  const mailOptions = {
+    from:    `"${FROM_NAME}" <${FROM_ADDRESS}>`,
+    to,
+    subject: "🔐 Yêu cầu đặt lại mật khẩu",
+    html:    buildResetPasswordEmailHtml({
+      userName,
+      resetUrl,
+      expiresMinutes: 60,
+    }),
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    logger.info(`EMAIL SENT: reset-password to=${to} messageId=${info.messageId}`);
+  } catch (err) {
+    logger.error(`EMAIL FAILED: reset-password to=${to} error=${err.message}`);
+    throw err;
   }
 };

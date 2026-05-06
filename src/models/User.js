@@ -6,9 +6,8 @@ const sequelize     = require("../config/db");
  *
  * Các fields chính:
  *   - id, name, email, password, age, role, avatar (cũ)
- *   - isVerified: trạng thái đã verify email (Phần 2)
- *   - verificationToken: token random gửi qua email để verify (Phần 2)
- *   - verificationTokenExpiresAt: thời điểm token hết hạn (Phần 2)
+ *   - isVerified, verificationToken, verificationTokenExpiresAt (Phần 2)
+ *   - passwordResetToken, passwordResetExpiresAt (Phần 3)
  */
 const User = sequelize.define(
   "User",
@@ -63,7 +62,7 @@ const User = sequelize.define(
     },
 
     /**
-     * Token random 64 ký tự hex (32 bytes) gửi qua email.
+     * Token random 64 ký tự hex (32 bytes) gửi qua email verify.
      * Set NULL sau khi verify thành công để không reuse được.
      */
     verificationToken: {
@@ -73,10 +72,31 @@ const User = sequelize.define(
     },
 
     /**
-     * Thời điểm token hết hạn (24h kể từ lúc tạo).
-     * Verify endpoint check: now > expiresAt → reject.
+     * Thời điểm verification token hết hạn (24h kể từ lúc tạo).
      */
     verificationTokenExpiresAt: {
+      type:         DataTypes.DATE,
+      allowNull:    true,
+      defaultValue: null,
+    },
+
+    // ─── Password Reset fields (Phần 3) ─────────────────────────────────
+
+    /**
+     * Token random 64 ký tự hex (32 bytes) gửi qua email reset password.
+     * Set NULL sau khi reset thành công để không reuse được.
+     */
+    passwordResetToken: {
+      type:         DataTypes.STRING(64),
+      allowNull:    true,
+      defaultValue: null,
+    },
+
+    /**
+     * Thời điểm password reset token hết hạn (1 GIỜ kể từ lúc tạo).
+     * Sensitive hơn verify nên expire nhanh hơn.
+     */
+    passwordResetExpiresAt: {
       type:         DataTypes.DATE,
       allowNull:    true,
       defaultValue: null,
@@ -87,8 +107,10 @@ const User = sequelize.define(
     timestamps: true,
     indexes: [
       { fields: ["role"], name: "idx_users_role" },
-      // Index verificationToken để verify endpoint query nhanh
-      { fields: ["verificationToken"], name: "idx_users_verification_token" },
+      // Index verificationToken (Phần 2) để verify endpoint query nhanh
+      { fields: ["verificationToken"],   name: "idx_users_verification_token" },
+      // Index passwordResetToken (Phần 3) để reset endpoint query nhanh
+      { fields: ["passwordResetToken"],  name: "idx_users_password_reset_token" },
     ],
   }
 );

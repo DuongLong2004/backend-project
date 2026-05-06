@@ -41,6 +41,16 @@ const REFRESH_TOKEN_EXPIRES_IN = "7d";
  */
 const VERIFICATION_TOKEN_EXPIRES_MS = 24 * 60 * 60 * 1000; // 24h
 
+/**
+ * Password reset token expiry — 1 GIỜ.
+ *
+ * Sensitive hơn verify nên expire nhanh hơn:
+ *   - Email leak → attacker chỉ có 1h để dùng
+ *   - User thường reset ngay khi nhận email
+ *   - OWASP recommendation: 15-60 phút cho password reset
+ */
+const PASSWORD_RESET_TOKEN_EXPIRES_MS = 60 * 60 * 1000; // 1h
+
 // ════════════════════════════════════════════════════════════════════════════
 // TOKEN HELPERS
 // ════════════════════════════════════════════════════════════════════════════
@@ -70,7 +80,7 @@ const generateRefreshToken = (user) =>
   );
 
 /**
- * Generate verification token an toàn để gửi qua email.
+ * Generate token an toàn cho email verify / password reset.
  *
  * @returns {string} Random hex string 64 ký tự (32 bytes).
  *
@@ -82,7 +92,7 @@ const generateRefreshToken = (user) =>
  *         - URL-safe (không có +/=)
  *         - Dễ debug bằng mắt
  */
-const generateVerificationToken = () => crypto.randomBytes(32).toString("hex");
+const generateSecureToken = () => crypto.randomBytes(32).toString("hex");
 
 // ════════════════════════════════════════════════════════════════════════════
 // REGISTER
@@ -106,15 +116,6 @@ const generateVerificationToken = () => crypto.randomBytes(32).toString("hex");
  * @returns {Promise<Object>} User DTO
  *
  * @throws {AppError} 409 nếu email đã tồn tại
- *
- * @design Email gửi best-effort:
- *   - Nếu SMTP fail → log error nhưng KHÔNG throw lên user
- *   - User vẫn nhận response 201 success
- *   - User dùng "Resend verification" để retry
- *
- *   Lý do: Không nên rollback user creation chỉ vì email service down.
- *          Trải nghiệm tốt hơn là user thấy "đăng ký thành công"
- *          + có nút resend email khi cần.
  */
 exports.register = async ({ name, email, password }) => {
   const existing = await User.findOne({ where: { email } });
@@ -124,8 +125,7 @@ exports.register = async ({ name, email, password }) => {
 
   const hashed = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
-  // Generate verification token + expiry
-  const verificationToken          = generateVerificationToken();
+  const verificationToken          = generateSecureToken();
   const verificationTokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_EXPIRES_MS);
 
   const user = await User.create({
@@ -143,10 +143,6 @@ exports.register = async ({ name, email, password }) => {
   /*
    * Gửi email verify — best-effort.
    * Wrap trong try-catch để KHÔNG throw lên controller.
-   *
-   * Trade-off:
-   *   ❌ User không nhận được email → phải resend
-   *   ✅ User vẫn register thành công kể cả SMTP down
    */
   try {
     await emailService.sendVerificationEmail({
@@ -182,9 +178,6 @@ exports.register = async ({ name, email, password }) => {
  * @throws {AppError} 403 nếu chưa verify email
  *
  * @security Generic error "Invalid email or password" để chống user enumeration.
- *           Tuy nhiên với case "chưa verify" thì THROW message rõ ràng vì:
- *             - User đã pass authentication (đúng email + password)
- *             - Cần biết để click "Resend verification email"
  */
 exports.login = async ({ email, password, ip }) => {
   if (!email || !password) {
@@ -205,11 +198,7 @@ exports.login = async ({ email, password, ip }) => {
 
   /*
    * BLOCK login nếu chưa verify email.
-   *
-   * Đặt check NÀY SAU bcrypt compare để chống user enumeration:
-   *   - Nếu check trước: attacker biết email nào đã register
-   *     (chỉ cần thử login → thấy "chưa verify" → confirm email tồn tại)
-   *   - Nếu check sau: phải có đúng password mới biết → an toàn
+   * Đặt check NÀY SAU bcrypt compare để chống user enumeration.
    */
   if (!user.isVerified) {
     logger.warn(`AUTH FAIL: Email not verified email=${email} ip=${ip}`);
@@ -247,8 +236,6 @@ exports.login = async ({ email, password, ip }) => {
  *
  * @security Implement Refresh Token Rotation:
  *           - Mỗi lần refresh → cấp token mới + invalidate token cũ
- *           - Giảm risk nếu token bị steal vì attacker chỉ dùng được 1 lần
- *           - Reset TTL 7 ngày → user active không bị logout đột ngột
  */
 exports.refresh = async ({ refreshToken }) => {
   if (!refreshToken) {
@@ -269,7 +256,6 @@ exports.refresh = async ({ refreshToken }) => {
 
   const user = await User.findByPk(decoded.id);
   if (!user) {
-    // Cleanup orphan refresh token
     await deleteRefreshToken(decoded.id);
     throw new AppError("User not found", 401);
   }
@@ -277,7 +263,6 @@ exports.refresh = async ({ refreshToken }) => {
   const newAccessToken  = generateAccessToken(user);
   const newRefreshToken = generateRefreshToken(user);
 
-  // Rotate — overwrite key trong Redis (atomic operation)
   await setRefreshToken(user.id, newRefreshToken);
 
   return {
@@ -293,12 +278,7 @@ exports.refresh = async ({ refreshToken }) => {
 /**
  * Logout user — xóa refresh token khỏi Redis.
  *
- * @design IDEMPOTENT OPERATION
- *
- *   Logout luôn return success kể cả khi:
- *     - refreshToken không truyền lên
- *     - Token invalid/expired
- *     - Token đã bị revoke trước đó
+ * @design IDEMPOTENT OPERATION — luôn return success.
  */
 exports.logout = async ({ refreshToken }) => {
   if (!refreshToken) {
@@ -324,44 +304,21 @@ exports.logout = async ({ refreshToken }) => {
 
 /**
  * Verify email khi user click link trong email.
- *
- * Flow:
- *   1. FE nhận token từ URL
- *   2. FE call: GET /api/auth/verify-email?token=xxx
- *   3. BE verify token + check expiry
- *   4. BE update isVerified=true, clear token
- *   5. BE return success → FE redirect user về /verify-email-success
- *
- * @param {Object} payload
- * @param {string} payload.token - Verification token từ query string
- * @returns {Promise<{message, user}>}
- *
- * @throws {AppError} 400 nếu thiếu token
- * @throws {AppError} 400 nếu token invalid hoặc đã hết hạn
- *
- * @security Generic error message — không tiết lộ chi tiết
- *           "token không tồn tại" vs "token hết hạn".
  */
 exports.verifyEmail = async ({ token }) => {
   if (!token) {
     throw new AppError("Verification token is required", 400);
   }
 
-  // Tìm user theo token (có index nên query nhanh)
   const user = await User.findOne({ where: { verificationToken: token } });
   if (!user) {
     throw new AppError("Token không hợp lệ hoặc đã được sử dụng", 400);
   }
 
-  // Check token có hết hạn chưa
   if (
     !user.verificationTokenExpiresAt ||
     new Date() > new Date(user.verificationTokenExpiresAt)
   ) {
-    /*
-     * Token expired → cleanup luôn để giữ DB sạch.
-     * User cần dùng "Resend verification" để lấy token mới.
-     */
     await user.update({
       verificationToken:          null,
       verificationTokenExpiresAt: null,
@@ -369,18 +326,6 @@ exports.verifyEmail = async ({ token }) => {
     throw new AppError("Token đã hết hạn. Vui lòng yêu cầu gửi lại link xác thực.", 400);
   }
 
-  /*
-   * Idempotent check: Nếu user đã verify rồi → vẫn return success.
-   *
-   * Tại sao? User có thể click link 2 lần:
-   *   - Lần 1: verify thành công → token bị clear
-   *   - Lần 2: token không match → throw "invalid"
-   *
-   * Nhưng case này gần như không xảy ra vì sau lần 1 token đã NULL,
-   * lần 2 sẽ tìm user theo token NULL → không match → throw 400.
-   *
-   * Để clean code, nếu reach đến đây thì user CHƯA verified — verify thôi.
-   */
   await user.update({
     isVerified:                 true,
     verificationToken:          null,
@@ -403,17 +348,7 @@ exports.verifyEmail = async ({ token }) => {
 /**
  * Resend verification email — gửi lại email cho user chưa verify.
  *
- * @param {Object} payload
- * @param {string} payload.email
- * @returns {Promise<void>}
- *
- * @throws {AppError} 400 nếu thiếu email hoặc email đã verify rồi
- *
- * @security Generic message khi user không tồn tại — chống user enumeration.
- *           KHÔNG báo "email không tồn tại trong hệ thống".
- *
- * @note Endpoint này không cần auth — user chưa login được vì chưa verify.
- *       Tuy nhiên cần rate limit để chống spam (sẽ làm ở Phần 8).
+ * @security Anti-enumeration: silent success nếu email không tồn tại.
  */
 exports.resendVerificationEmail = async ({ email }) => {
   if (!email) {
@@ -422,13 +357,6 @@ exports.resendVerificationEmail = async ({ email }) => {
 
   const user = await User.findOne({ where: { email } });
 
-  /*
-   * Anti-enumeration: Trả về success kể cả khi email không tồn tại.
-   * Lý do: Nếu báo "email not found", attacker có thể dùng endpoint này
-   *        để check email nào đã đăng ký.
-   *
-   * Trade-off: User typo email cũng thấy "thành công" → check spam folder.
-   */
   if (!user) {
     logger.warn(`RESEND VERIFICATION: Email not found email=${email}`);
     return; // Silent success
@@ -438,8 +366,7 @@ exports.resendVerificationEmail = async ({ email }) => {
     throw new AppError("Email này đã được xác thực rồi", 400);
   }
 
-  // Generate token MỚI và update DB
-  const verificationToken          = generateVerificationToken();
+  const verificationToken          = generateSecureToken();
   const verificationTokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_EXPIRES_MS);
 
   await user.update({
@@ -447,7 +374,6 @@ exports.resendVerificationEmail = async ({ email }) => {
     verificationTokenExpiresAt,
   });
 
-  // Gửi email — best-effort
   try {
     await emailService.sendVerificationEmail({
       to:       user.email,
@@ -459,4 +385,188 @@ exports.resendVerificationEmail = async ({ email }) => {
     logger.error(`RESEND VERIFICATION FAILED: email=${email} error=${err.message}`);
     throw new AppError("Không thể gửi email. Vui lòng thử lại sau.", 500);
   }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// FORGOT / RESET PASSWORD (Phần 3)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Forgot password — gửi email reset password cho user.
+ *
+ * Flow:
+ *   1. User submit email ở FE /forgot-password
+ *   2. BE check email tồn tại trong DB
+ *   3. Generate reset token + expiry 1h
+ *   4. Save token vào DB
+ *   5. Gửi email kèm link {FE}/reset-password?token=xxx
+ *   6. Return success (kể cả khi email không tồn tại — anti-enumeration)
+ *
+ * @param {Object} payload
+ * @param {string} payload.email
+ * @returns {Promise<void>}
+ *
+ * @throws {AppError} 400 nếu thiếu email
+ * @throws {AppError} 500 nếu email service fail (chỉ cho user TỒN TẠI)
+ *
+ * @security ANTI-ENUMERATION:
+ *   - Nếu email không tồn tại → return success silent (không báo lỗi)
+ *   - Nếu báo "email not found" → attacker dùng endpoint này để check
+ *     email nào đã đăng ký trong hệ thống.
+ *
+ * @security Không cho reset nếu chưa verify email:
+ *   Lý do: Nếu user A nhập sai email lúc đăng ký (email B của người khác),
+ *   user B nhận được email reset → có thể chiếm tài khoản A.
+ *   Bắt verify email trước khi cho reset → đảm bảo email là của user thật.
+ */
+exports.forgotPassword = async ({ email }) => {
+  if (!email) {
+    throw new AppError("Email is required", 400);
+  }
+
+  const user = await User.findOne({ where: { email } });
+
+  /*
+   * Anti-enumeration: Trả về success kể cả khi email không tồn tại.
+   * Logger ghi lại để admin biết có ai đó probe endpoint này.
+   */
+  if (!user) {
+    logger.warn(`FORGOT PASSWORD: Email not found email=${email}`);
+    return; // Silent success
+  }
+
+  /*
+   * Block reset nếu user chưa verify email.
+   * Lý do bảo mật đã giải thích ở JSDoc trên.
+   *
+   * Vẫn return silent success thay vì throw error rõ ràng
+   * để consistency với case email không tồn tại.
+   */
+  if (!user.isVerified) {
+    logger.warn(`FORGOT PASSWORD: Email not verified email=${email}`);
+    return; // Silent success
+  }
+
+  // Generate reset token + expiry
+  const passwordResetToken     = generateSecureToken();
+  const passwordResetExpiresAt = new Date(Date.now() + PASSWORD_RESET_TOKEN_EXPIRES_MS);
+
+  await user.update({
+    passwordResetToken,
+    passwordResetExpiresAt,
+  });
+
+  try {
+    await emailService.sendPasswordResetEmail({
+      to:       user.email,
+      userName: user.name,
+      token:    passwordResetToken,
+    });
+    logger.info(`FORGOT PASSWORD SUCCESS: email=${email}`);
+  } catch (err) {
+    logger.error(`FORGOT PASSWORD FAILED: email=${email} error=${err.message}`);
+
+    /*
+     * Nếu email gửi fail, cleanup token để user request lại.
+     * Throw error để FE biết và hiển thị retry.
+     */
+    await user.update({
+      passwordResetToken:     null,
+      passwordResetExpiresAt: null,
+    });
+    throw new AppError("Không thể gửi email. Vui lòng thử lại sau.", 500);
+  }
+};
+
+/**
+ * Reset password — set mật khẩu mới với token từ email.
+ *
+ * Flow:
+ *   1. User click link trong email → mở FE /reset-password?token=xxx
+ *   2. FE hiển thị form nhập mật khẩu mới
+ *   3. FE submit POST {token, newPassword}
+ *   4. BE verify token + check expiry
+ *   5. BE hash password mới
+ *   6. BE update DB: password mới + clear token
+ *   7. BE clear ALL refresh tokens trong Redis (logout all devices)
+ *   8. Return success → FE redirect về login
+ *
+ * @param {Object} payload
+ * @param {string} payload.token       - Reset token từ query string
+ * @param {string} payload.newPassword - Mật khẩu mới (đã được Joi validate)
+ * @returns {Promise<{message, email}>}
+ *
+ * @throws {AppError} 400 nếu thiếu token/password
+ * @throws {AppError} 400 nếu token invalid hoặc đã hết hạn
+ *
+ * @security 2 lý do clear all refresh tokens:
+ *   1. User legitimate reset password (quên/lo ngại bảo mật)
+ *      → Logout devices khác để chắc chắn không còn session cũ.
+ *   2. Attacker đã chiếm session cũ
+ *      → Reset password + revoke all sessions = đuổi attacker ra.
+ */
+exports.resetPassword = async ({ token, newPassword }) => {
+  if (!token) {
+    throw new AppError("Reset token is required", 400);
+  }
+  if (!newPassword) {
+    throw new AppError("New password is required", 400);
+  }
+
+  // Tìm user theo reset token (có index nên query nhanh)
+  const user = await User.findOne({ where: { passwordResetToken: token } });
+  if (!user) {
+    throw new AppError("Token không hợp lệ hoặc đã được sử dụng", 400);
+  }
+
+  // Check token có hết hạn chưa
+  if (
+    !user.passwordResetExpiresAt ||
+    new Date() > new Date(user.passwordResetExpiresAt)
+  ) {
+    /*
+     * Token expired → cleanup luôn để giữ DB sạch.
+     * User cần request "Forgot password" lại để lấy token mới.
+     */
+    await user.update({
+      passwordResetToken:     null,
+      passwordResetExpiresAt: null,
+    });
+    throw new AppError(
+      "Token đã hết hạn. Vui lòng yêu cầu đặt lại mật khẩu mới.",
+      400
+    );
+  }
+
+  // Hash password mới với salt rounds 12 (consistent toàn project)
+  const hashed = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+
+  // Update password + clear reset token
+  await user.update({
+    password:               hashed,
+    passwordResetToken:     null,
+    passwordResetExpiresAt: null,
+  });
+
+  /*
+   * SECURITY: Clear ALL refresh tokens của user → logout all devices.
+   *
+   * Hiện tại Redis schema lưu key `refresh:{userId}` — 1 user 1 token.
+   * deleteRefreshToken(userId) xóa key này → tất cả device dùng refresh token
+   * cũ sẽ bị reject ở endpoint /refresh.
+   *
+   * Khi triển khai multi-device session (Phần 5), structure sẽ thay đổi
+   * thành `refresh:{userId}:{deviceId}` — lúc đó cần update logic này
+   * để DEL theo pattern `refresh:{userId}:*`.
+   */
+  await deleteRefreshToken(user.id);
+
+  logger.info(
+    `PASSWORD RESET SUCCESS: email=${user.email} userId=${user.id} — all sessions revoked`
+  );
+
+  return {
+    message: "Đặt lại mật khẩu thành công! Vui lòng đăng nhập lại.",
+    email:   user.email,
+  };
 };
