@@ -6,9 +6,10 @@ const AppError = require("../utils/AppError");
 const logger   = require("../utils/logger");
 const emailService = require("./email.service");
 const {
-  setRefreshToken,
-  getRefreshToken,
-  deleteRefreshToken,
+  createSession,
+  getSession,
+  deleteSession,
+  deleteAllSessions,
 } = require("../config/redis");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -56,11 +57,21 @@ const PASSWORD_RESET_TOKEN_EXPIRES_MS = 60 * 60 * 1000; // 1h
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Generate JWT access token với payload chứa user identity và role.
+ * Generate JWT access token với payload chứa user identity, role, và deviceId.
+ *
+ * @param {Object} user      - User instance từ DB
+ * @param {string} deviceId  - UUID của device (Phần 5 — multi-device session)
+ *
+ * @design Phần 5 thêm `deviceId` vào payload để middleware extract được
+ *         → biết user đang dùng device nào → cần cho session-aware logic
+ *         như list sessions, logout this device, v.v.
+ *
+ * @note Backward compat: Token cũ từ Phần 1-4 không có deviceId.
+ *       Khi refresh, nếu decoded.deviceId === undefined → reject để force re-login.
  */
-const generateAccessToken = (user) =>
+const generateAccessToken = (user, deviceId) =>
   jwt.sign(
-    { id: user.id, email: user.email, role: user.role },
+    { id: user.id, email: user.email, role: user.role, deviceId },
     process.env.JWT_SECRET,
     { expiresIn: ACCESS_TOKEN_EXPIRES_IN }
   );
@@ -68,13 +79,16 @@ const generateAccessToken = (user) =>
 /**
  * Generate JWT refresh token.
  *
- * @note Payload chỉ chứa userId — KHÔNG include role/email.
+ * @note Payload chỉ chứa userId + deviceId — KHÔNG include role/email.
  *       Lý do: refresh token chỉ dùng để cấp access token mới,
  *       lúc đó sẽ query DB lấy thông tin mới nhất.
+ *
+ * @param {Object} user      - User instance từ DB
+ * @param {string} deviceId  - UUID của device (Phần 5)
  */
-const generateRefreshToken = (user) =>
+const generateRefreshToken = (user, deviceId) =>
   jwt.sign(
-    { id: user.id },
+    { id: user.id, deviceId },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: REFRESH_TOKEN_EXPIRES_IN }
   );
@@ -93,6 +107,41 @@ const generateRefreshToken = (user) =>
  *         - Dễ debug bằng mắt
  */
 const generateSecureToken = () => crypto.randomBytes(32).toString("hex");
+
+/**
+ * Parse User-Agent string → friendly device name (Phần 5).
+ *
+ * @param {string} userAgent - Raw User-Agent header
+ * @returns {string} VD: "Chrome on Windows", "Safari on iPhone"
+ *
+ * @example
+ *   "Mozilla/5.0 (Windows NT 10.0)... Chrome/120" → "Chrome on Windows"
+ *   "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)... Safari" → "Safari on iPhone"
+ *
+ * @note Dùng simple regex thay vì lib `ua-parser-js` để giảm dependencies.
+ *       Đủ tốt cho UX hiển thị "Chrome on Windows" trong session manager.
+ *       Nếu cần parse phức tạp hơn (model, version), upgrade sang ua-parser-js sau.
+ */
+const parseDeviceName = (userAgent = "") => {
+  const ua = userAgent.toLowerCase();
+
+  let browser = "Unknown Browser";
+  if (ua.includes("edg/"))           browser = "Edge";
+  else if (ua.includes("chrome/"))   browser = "Chrome";
+  else if (ua.includes("firefox/"))  browser = "Firefox";
+  else if (ua.includes("safari/"))   browser = "Safari";
+  else if (ua.includes("opera") || ua.includes("opr/")) browser = "Opera";
+  else if (ua.includes("postman"))   browser = "Postman";
+
+  let os = "Unknown OS";
+  if (ua.includes("windows"))   os = "Windows";
+  else if (ua.includes("mac"))  os = "macOS";
+  else if (ua.includes("iphone") || ua.includes("ipad")) os = "iOS";
+  else if (ua.includes("android"))  os = "Android";
+  else if (ua.includes("linux"))    os = "Linux";
+
+  return `${browser} on ${os}`;
+};
 
 // ════════════════════════════════════════════════════════════════════════════
 // REGISTER
@@ -167,19 +216,40 @@ exports.register = async ({ name, email, password }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// LOGIN
+// LOGIN (Phần 5 — Multi-device)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Login user và cấp access + refresh token.
+ * Login user với multi-device session support.
+ *
+ * Flow Phần 5:
+ *   1. Verify email/password (giống Phần 1-4)
+ *   2. Check email đã verify chưa (giống Phần 2)
+ *   3. Generate deviceId UUID MỚI cho phiên này
+ *   4. Issue access + refresh tokens kèm deviceId trong payload
+ *   5. Lưu session vào Redis: session:{userId}:{deviceId} = { refreshToken, metadata }
+ *
+ * @param {Object} payload
+ * @param {string} payload.email
+ * @param {string} payload.password
+ * @param {string} payload.ip          - req.ip
+ * @param {string} payload.userAgent   - req.headers['user-agent']
+ *
+ * @returns {Promise<{accessToken, refreshToken, user}>}
  *
  * @throws {AppError} 400 nếu thiếu email/password
  * @throws {AppError} 401 nếu email/password sai
  * @throws {AppError} 403 nếu chưa verify email
  *
  * @security Generic error "Invalid email or password" để chống user enumeration.
+ *           Check `isVerified` đặt SAU bcrypt compare để timing attack không
+ *           lộ được email nào đã đăng ký.
+ *
+ * @design Decision Q1=A: Mỗi lần login = deviceId mới (UUID random).
+ *         Cùng browser login lại tạo session mới — chấp nhận trade-off này
+ *         để đơn giản, không cần FE generate/lưu deviceId.
  */
-exports.login = async ({ email, password, ip }) => {
+exports.login = async ({ email, password, ip, userAgent }) => {
   if (!email || !password) {
     throw new AppError("Email and password are required", 400);
   }
@@ -208,11 +278,24 @@ exports.login = async ({ email, password, ip }) => {
     );
   }
 
-  const accessToken  = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
+  // Phần 5: Generate deviceId mới + tạo session multi-device
+  const deviceId    = crypto.randomUUID();
+  const deviceName  = parseDeviceName(userAgent);
+  const accessToken  = generateAccessToken(user, deviceId);
+  const refreshToken = generateRefreshToken(user, deviceId);
 
-  await setRefreshToken(user.id, refreshToken);
-  logger.info(`LOGIN SUCCESS: email=${email} ip=${ip}`);
+  await createSession({
+    userId: user.id,
+    deviceId,
+    refreshToken,
+    deviceName,
+    userAgent: userAgent || "Unknown",
+    ip:        ip || "Unknown",
+  });
+
+  logger.info(
+    `LOGIN SUCCESS: email=${email} ip=${ip} device="${deviceName}" deviceId=${deviceId}`
+  );
 
   return {
     accessToken,
@@ -228,14 +311,24 @@ exports.login = async ({ email, password, ip }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// REFRESH TOKEN
+// REFRESH TOKEN (Phần 5 — Multi-device)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Refresh access token + rotate refresh token.
+ * Refresh access token với device-aware logic.
+ *
+ * Flow Phần 5:
+ *   1. Decode refreshToken → lấy userId + deviceId
+ *   2. Reject nếu token cũ Phần 1-4 không có deviceId (force re-login)
+ *   3. Verify session tồn tại trong Redis (key: session:{userId}:{deviceId})
+ *   4. Verify refreshToken trong session khớp với token gửi lên
+ *   5. Issue tokens MỚI cho cùng deviceId (rotation)
+ *   6. Update session với refreshToken mới + lastActive
  *
  * @security Implement Refresh Token Rotation:
- *           - Mỗi lần refresh → cấp token mới + invalidate token cũ
+ *   - Mỗi lần refresh → cấp token mới + lưu vào Redis (overwrite token cũ)
+ *   - Nếu attacker reuse token cũ → mismatch với token trong Redis
+ *     → revoke session ngay, log warning để admin biết có khả năng bị tấn công.
  */
 exports.refresh = async ({ refreshToken }) => {
   if (!refreshToken) {
@@ -249,21 +342,56 @@ exports.refresh = async ({ refreshToken }) => {
     throw new AppError("Invalid or expired refresh token", 401);
   }
 
-  const storedToken = await getRefreshToken(decoded.id);
-  if (!storedToken || storedToken !== refreshToken) {
+  const { id: userId, deviceId } = decoded;
+  if (!deviceId) {
+    /*
+     * Token cũ (Phần 1-4) không có deviceId trong payload.
+     * Reject để force re-login → user sẽ có session mới với multi-device support.
+     */
+    throw new AppError("Token format outdated, please login again", 401);
+  }
+
+  const session = await getSession(userId, deviceId);
+  if (!session) {
+    throw new AppError("Session has been revoked", 401);
+  }
+
+  if (session.refreshToken !== refreshToken) {
+    /*
+     * Token rotation security check:
+     *   Nếu token gửi lên KHÁC token đang lưu trong Redis
+     *   → có khả năng attacker đang dùng token cũ (đã rotate)
+     *   → revoke session ngay để chặn attacker.
+     *
+     * Đây là dấu hiệu của "refresh token reuse attack" — best practice
+     * khuyến nghị bởi OAuth 2.0 Security BCP.
+     */
+    await deleteSession(userId, deviceId);
+    logger.warn(
+      `REFRESH MISMATCH: Possible token reuse attack userId=${userId} deviceId=${deviceId}`
+    );
     throw new AppError("Refresh token has been revoked", 401);
   }
 
-  const user = await User.findByPk(decoded.id);
+  const user = await User.findByPk(userId);
   if (!user) {
-    await deleteRefreshToken(decoded.id);
+    await deleteSession(userId, deviceId);
     throw new AppError("User not found", 401);
   }
 
-  const newAccessToken  = generateAccessToken(user);
-  const newRefreshToken = generateRefreshToken(user);
+  // Cấp tokens MỚI cho cùng deviceId (giữ nguyên session, chỉ rotate token)
+  const newAccessToken  = generateAccessToken(user, deviceId);
+  const newRefreshToken = generateRefreshToken(user, deviceId);
 
-  await setRefreshToken(user.id, newRefreshToken);
+  // Update session: ghi đè refreshToken mới, giữ nguyên metadata
+  await createSession({
+    userId,
+    deviceId,
+    refreshToken: newRefreshToken,
+    deviceName:   session.deviceName,
+    userAgent:    session.userAgent,
+    ip:           session.ip,
+  });
 
   return {
     accessToken:  newAccessToken,
@@ -272,13 +400,23 @@ exports.refresh = async ({ refreshToken }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// LOGOUT
+// LOGOUT (Phần 5 — Multi-device)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Logout user — xóa refresh token khỏi Redis.
+ * Logout user — xóa session của device hiện tại.
  *
  * @design IDEMPOTENT OPERATION — luôn return success.
+ *   - Token missing → silent success
+ *   - Token invalid → silent success
+ *   - Session không tồn tại → silent success
+ *
+ *   Lý do: Logout không nên bao giờ throw error. Theo RFC 7231, DELETE-like
+ *   operation phải idempotent. User click logout 2 lần liên tiếp KHÔNG nên
+ *   thấy lỗi ở lần thứ 2.
+ *
+ * @note Phần 5 chỉ xóa session của DEVICE HIỆN TẠI, không động devices khác.
+ *       Để logout all devices khác → dùng endpoint DELETE /api/auth/sessions.
  */
 exports.logout = async ({ refreshToken }) => {
   if (!refreshToken) {
@@ -294,8 +432,19 @@ exports.logout = async ({ refreshToken }) => {
     return;
   }
 
-  await deleteRefreshToken(decoded.id);
-  logger.info(`LOGOUT SUCCESS: userId=${decoded.id}`);
+  const { id: userId, deviceId } = decoded;
+  if (deviceId) {
+    // Phần 5: Xóa đúng 1 session của device này
+    await deleteSession(userId, deviceId);
+    logger.info(`LOGOUT SUCCESS: userId=${userId} deviceId=${deviceId}`);
+  } else {
+    /*
+     * Token cũ Phần 1-4 không có deviceId.
+     * Fallback: xóa toàn bộ legacy + multi-device sessions để cleanup triệt để.
+     */
+    await deleteAllSessions(userId);
+    logger.info(`LOGOUT SUCCESS (legacy): userId=${userId}`);
+  }
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -388,7 +537,7 @@ exports.resendVerificationEmail = async ({ email }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// FORGOT / RESET PASSWORD (Phần 3)
+// FORGOT / RESET PASSWORD (Phần 3 — minor update Phần 5)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -488,7 +637,7 @@ exports.forgotPassword = async ({ email }) => {
  *   4. BE verify token + check expiry
  *   5. BE hash password mới
  *   6. BE update DB: password mới + clear token
- *   7. BE clear ALL refresh tokens trong Redis (logout all devices)
+ *   7. BE clear ALL sessions của user (logout all devices) — Phần 5
  *   8. Return success → FE redirect về login
  *
  * @param {Object} payload
@@ -499,11 +648,15 @@ exports.forgotPassword = async ({ email }) => {
  * @throws {AppError} 400 nếu thiếu token/password
  * @throws {AppError} 400 nếu token invalid hoặc đã hết hạn
  *
- * @security 2 lý do clear all refresh tokens:
+ * @security 2 lý do clear all sessions:
  *   1. User legitimate reset password (quên/lo ngại bảo mật)
  *      → Logout devices khác để chắc chắn không còn session cũ.
  *   2. Attacker đã chiếm session cũ
  *      → Reset password + revoke all sessions = đuổi attacker ra.
+ *
+ * @note Phần 5 update: thay `deleteRefreshToken(userId)` (legacy single-token)
+ *       bằng `deleteAllSessions(userId)` (multi-device). Behavior tương đương:
+ *       cả 2 đều xóa toàn bộ refresh tokens của user.
  */
 exports.resetPassword = async ({ token, newPassword }) => {
   if (!token) {
@@ -549,17 +702,13 @@ exports.resetPassword = async ({ token, newPassword }) => {
   });
 
   /*
-   * SECURITY: Clear ALL refresh tokens của user → logout all devices.
+   * SECURITY: Clear ALL sessions của user → logout all devices.
    *
-   * Hiện tại Redis schema lưu key `refresh:{userId}` — 1 user 1 token.
-   * deleteRefreshToken(userId) xóa key này → tất cả device dùng refresh token
-   * cũ sẽ bị reject ở endpoint /refresh.
-   *
-   * Khi triển khai multi-device session (Phần 5), structure sẽ thay đổi
-   * thành `refresh:{userId}:{deviceId}` — lúc đó cần update logic này
-   * để DEL theo pattern `refresh:{userId}:*`.
+   * Phần 5 schema: session:{userId}:{deviceId} (multi-device).
+   * deleteAllSessions(userId) xóa TẤT CẢ keys match pattern session:{userId}:*
+   * → tất cả device đang dùng token cũ sẽ bị reject ở endpoint /refresh.
    */
-  await deleteRefreshToken(user.id);
+  await deleteAllSessions(user.id);
 
   logger.info(
     `PASSWORD RESET SUCCESS: email=${user.email} userId=${user.id} — all sessions revoked`
@@ -572,27 +721,29 @@ exports.resetPassword = async ({ token, newPassword }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// CHANGE PASSWORD (Phần 4)
+// CHANGE PASSWORD (Phần 4 — refactor Phần 5)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
  * Change password — đổi mật khẩu khi user đã login.
  *
- * Flow:
+ * Flow Phần 5:
  *   1. Lấy user từ DB theo userId (đã verify token ở middleware)
  *   2. Verify currentPassword bằng bcrypt.compare
  *   3. Check newPassword ≠ currentPassword (chống đổi-mà-không-đổi)
  *   4. Hash newPassword bằng bcrypt 12
  *   5. Update password trong DB
- *   6. Revoke ALL refresh tokens cũ (security)
- *   7. Cấp accessToken + refreshToken MỚI ngay (UX tốt — Option C)
- *   8. Save refreshToken mới vào Redis
+ *   6. Revoke ALL sessions cũ (multi-device — Phần 5)
+ *   7. Generate deviceId MỚI + cấp tokens mới (giống flow login)
+ *   8. Save session mới vào Redis
  *   9. Return tokens mới + user info để FE update localStorage
  *
  * @param {Object} payload
  * @param {number} payload.userId           - ID từ JWT (req.user.id)
  * @param {string} payload.currentPassword
  * @param {string} payload.newPassword      - Đã được Joi validate password policy
+ * @param {string} payload.ip               - req.ip cho metadata session mới
+ * @param {string} payload.userAgent        - req.headers['user-agent']
  * @returns {Promise<{message, accessToken, refreshToken, user}>}
  *
  * @throws {AppError} 401 nếu currentPassword sai
@@ -601,25 +752,33 @@ exports.resetPassword = async ({ token, newPassword }) => {
  *                       nhưng token chưa expire)
  *
  * @security OPTION C — Token rotation thay vì logout all:
- *   - Clear refresh token cũ trong Redis → các device khác bị logout khi gọi /refresh
- *   - Cấp tokens mới ngay → user hiện tại KHÔNG bị logout
- *   - FE nhận tokens mới → update localStorage → tiếp tục dùng bình thường
+ *   - Clear all sessions cũ → các device khác bị logout
+ *   - Cấp deviceId + tokens MỚI → user hiện tại tiếp tục dùng app
+ *   - FE nhận tokens mới → update localStorage → KHÔNG bị logout
  *
  *   So với resetPassword (clear all + redirect login):
  *     - resetPassword: user QUÊN mật khẩu → đã không có session, OK redirect login
  *     - changePassword: user ĐANG có session → giữ session là UX hợp lý
  *
  * @security Acceptable trade-off với access token cũ:
- *   Access token cũ vẫn valid trong tối đa 15 phút (đến khi expire).
- *   Nhưng refresh token cũ đã bị revoke → attacker không thể refresh được.
+ *   Access token cũ (15m TTL) vẫn valid trong tối đa 15 phút.
+ *   Nhưng refresh token cũ đã bị revoke → attacker không thể refresh.
  *   15 phút < session window thông thường → trade-off chấp nhận được.
  *
- * @future Khi triển khai multi-device session ở Phần 5:
- *   - Thay deleteRefreshToken(userId) bằng "clear all except current device"
- *   - Lúc đó user đổi password chỉ logout device khác, giữ device hiện tại
- *   - Hiện tại single-device nên cứ clear all rồi cấp lại = behavior tương đương
+ * @note Phần 5 refactor:
+ *   - Decision Q3=A: vẫn behavior "clear all + cấp mới" như Phần 4.
+ *   - Implementation: dùng `deleteAllSessions` + `createSession` thay vì
+ *     `deleteRefreshToken` + `setRefreshToken` của legacy schema.
+ *   - Generate deviceId mới (UUID) cho session sau đổi password — coi như
+ *     1 phiên login mới của device hiện tại.
  */
-exports.changePassword = async ({ userId, currentPassword, newPassword }) => {
+exports.changePassword = async ({
+  userId,
+  currentPassword,
+  newPassword,
+  ip,
+  userAgent,
+}) => {
   // Bước 1: Lấy user từ DB (cần password hash để verify)
   const user = await User.findByPk(userId);
   if (!user) {
@@ -659,35 +818,41 @@ exports.changePassword = async ({ userId, currentPassword, newPassword }) => {
   await user.update({ password: hashed });
 
   /*
-   * Bước 6: Revoke refresh token cũ.
+   * Bước 6: Revoke ALL sessions cũ (multi-device — Phần 5).
    *
-   * Hiện tại schema Redis là `refresh:{userId}` — 1 user 1 token.
-   * deleteRefreshToken(userId) xóa key → các device khác (nếu có) gọi /refresh
-   * sẽ bị reject vì token cũ không còn trong Redis.
-   *
-   * Khi triển khai multi-device session ở Phần 5, structure sẽ thành
-   * `refresh:{userId}:{deviceId}` — lúc đó cần update logic để DEL pattern
-   * và NEU cần giữ device hiện tại thì exclude deviceId của nó.
+   * deleteAllSessions xóa tất cả keys match pattern session:{userId}:*
+   * → các device khác đang dùng token cũ sẽ bị reject ở /refresh.
+   * → device hiện tại CŨNG bị xóa session, nhưng sẽ được tạo lại
+   *   ngay bước 7-8 với deviceId mới.
    */
-  await deleteRefreshToken(user.id);
+  await deleteAllSessions(user.id);
 
   /*
-   * Bước 7-8: Cấp tokens MỚI và save vào Redis.
+   * Bước 7-8: Generate deviceId mới + cấp tokens mới + save session.
    *
    * Đây là điểm khác biệt quan trọng với resetPassword:
-   *   - resetPassword: clear all tokens → FE redirect về /login
+   *   - resetPassword: clear all → FE redirect về /login (user phải login lại)
    *   - changePassword: clear all + cấp tokens mới → FE giữ session hiện tại
    *
    * UX tốt hơn vì user đang authenticated, không có lý do phải logout họ.
    * Pattern này được dùng bởi GitHub, Google, AWS Console, etc.
    */
-  const accessToken  = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
+  const deviceId    = crypto.randomUUID();
+  const deviceName  = parseDeviceName(userAgent);
+  const accessToken  = generateAccessToken(user, deviceId);
+  const refreshToken = generateRefreshToken(user, deviceId);
 
-  await setRefreshToken(user.id, refreshToken);
+  await createSession({
+    userId: user.id,
+    deviceId,
+    refreshToken,
+    deviceName,
+    userAgent: userAgent || "Unknown",
+    ip:        ip || "Unknown",
+  });
 
   logger.info(
-    `CHANGE PASSWORD SUCCESS: email=${user.email} userId=${user.id} — tokens rotated`
+    `CHANGE PASSWORD SUCCESS: email=${user.email} userId=${user.id} — all sessions rotated, new deviceId=${deviceId}`
   );
 
   // Bước 9: Return tokens mới + user info để FE update localStorage

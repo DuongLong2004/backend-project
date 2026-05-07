@@ -14,6 +14,15 @@ jest.mock("../../src/config/redis", () => ({
     keys:    jest.fn().mockResolvedValue([]),
     del:     jest.fn().mockResolvedValue(true),
   },
+  // Multi-device session API (Phần 5)
+  createSession:       jest.fn().mockResolvedValue(true),
+  getSession:          jest.fn().mockResolvedValue(null),
+  touchSession:        jest.fn().mockResolvedValue(true),
+  deleteSession:       jest.fn().mockResolvedValue(true),
+  listSessions:        jest.fn().mockResolvedValue([]),
+  deleteAllSessions:   jest.fn().mockResolvedValue(true),
+  deleteOtherSessions: jest.fn().mockResolvedValue(true),
+  // Legacy API (Phần 1-4 backward compat — vẫn giữ)
   setRefreshToken:    jest.fn().mockResolvedValue(true),
   getRefreshToken:    jest.fn().mockResolvedValue(null),
   deleteRefreshToken: jest.fn().mockResolvedValue(true),
@@ -106,7 +115,12 @@ const app  = require("../../src/app");
 const User = require("../../src/models/User");
 const { Order, OrderItem, Product, Review, Wishlist } = require("../../src/models/index");
 const emailService = require("../../src/services/email.service");
-const { deleteRefreshToken, setRefreshToken } = require("../../src/config/redis");
+const {
+  deleteRefreshToken,
+  setRefreshToken,
+  getSession,
+  deleteAllSessions,
+} = require("../../src/config/redis");
 
 // ════════════════════════════════════════════════════════════════════════════
 // TEST CONSTANTS
@@ -120,9 +134,9 @@ const INVALID_PASSWORDS = {
   NO_LETTER: "12345678",
 };
 
-const generateRefreshToken = (userId) =>
+const generateRefreshToken = (userId, deviceId = "test-device-uuid") =>
   jwt.sign(
-    { id: userId },
+    { id: userId, deviceId }, // Phần 5: thêm deviceId vào payload
     process.env.JWT_REFRESH_SECRET || "super_refresh_secret_key_456",
     { expiresIn: "7d" }
   );
@@ -557,8 +571,9 @@ describe("POST /api/auth/reset-password", () => {
     // Verify password được hash, không phải plaintext
     expect(updateMock.mock.calls[0][0].password).not.toBe(NEW_PASSWORD);
 
-    // Check refresh token đã bị xóa (logout all devices)
-    expect(deleteRefreshToken).toHaveBeenCalledWith(1);
+    // deleteAllSessions thay cho deleteRefreshToken (logout all devices)
+    const { deleteAllSessions } = require("../../src/config/redis");
+    expect(deleteAllSessions).toHaveBeenCalledWith(1);
   });
 
   it("should return 400 if token invalid", async () => {
@@ -679,9 +694,16 @@ describe("POST /api/auth/change-password", () => {
     );
     expect(mockUser.update.mock.calls[0][0].password).not.toBe(NEW_PASSWORD);
 
-    // Refresh token cũ bị revoke + token mới được set
-    expect(deleteRefreshToken).toHaveBeenCalledWith(1);
-    expect(setRefreshToken).toHaveBeenCalledWith(1, expect.any(String));
+    // DeleteAllSessions revoke tất cả + createSession tạo session mới
+    const { deleteAllSessions, createSession } = require("../../src/config/redis");
+    expect(deleteAllSessions).toHaveBeenCalledWith(1);
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 1,
+        refreshToken: expect.any(String),
+        deviceId: expect.any(String),
+      })
+    );
   });
 
   it("should return 401 if currentPassword is wrong", async () => {
@@ -771,19 +793,25 @@ describe("POST /api/auth/refresh", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should refresh token successfully", async () => {
-    const { getRefreshToken } = require("../../src/config/redis");
-    const refreshToken = generateRefreshToken(1);
+  const refreshToken = generateRefreshToken(1, "test-device-uuid");
 
-    getRefreshToken.mockResolvedValue(refreshToken);
-    User.findByPk.mockResolvedValue({
-      id: 1, email: "test@gmail.com", role: "user",
-      update: jest.fn().mockResolvedValue(true),
-    });
-
-    const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
-    expect(res.statusCode).toBe(200);
-    expect(res.body.data).toHaveProperty("accessToken");
+  // getSession trả về session với refreshToken match
+  getSession.mockResolvedValue({
+    refreshToken,
+    deviceName: "Test Device",
+    userAgent: "test",
+    ip: "::1",
   });
+
+  User.findByPk.mockResolvedValue({
+    id: 1, email: "test@gmail.com", role: "user",
+    update: jest.fn().mockResolvedValue(true),
+  });
+
+  const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
+  expect(res.statusCode).toBe(200);
+  expect(res.body.data).toHaveProperty("accessToken");
+});
 
   it("should return 400 if refreshToken missing", async () => {
     const res = await request(app).post("/api/auth/refresh").send({});
@@ -800,28 +828,35 @@ describe("POST /api/auth/refresh", () => {
   });
 
   it("should return 401 if refreshToken revoked", async () => {
-    const { getRefreshToken } = require("../../src/config/redis");
-    const refreshToken = generateRefreshToken(1);
-    getRefreshToken.mockResolvedValue(null);
+  const refreshToken = generateRefreshToken(1, "test-device-uuid");
 
-    const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
-    expect(res.statusCode).toBe(401);
-    expect(res.body.message).toBe("Refresh token has been revoked");
-  });
+  // session không tồn tại trong Redis
+  getSession.mockResolvedValue(null);
+
+  const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
+  expect(res.statusCode).toBe(401);
+  expect(res.body.message).toBe("Session has been revoked");
+});
 
   it("should cleanup orphan token if user not found", async () => {
-    const { getRefreshToken } = require("../../src/config/redis");
-    const refreshToken = generateRefreshToken(1);
+  const { deleteSession } = require("../../src/config/redis");
+  const refreshToken = generateRefreshToken(1, "test-device-uuid");
 
-    getRefreshToken.mockResolvedValue(refreshToken);
-    User.findByPk.mockResolvedValue(null);
-
-    const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
-
-    expect(res.statusCode).toBe(401);
-    expect(res.body.message).toBe("User not found");
-    expect(deleteRefreshToken).toHaveBeenCalledWith(1);
+  getSession.mockResolvedValue({
+    refreshToken,
+    deviceName: "Test Device",
+    userAgent: "test",
+    ip: "::1",
   });
+  User.findByPk.mockResolvedValue(null);
+
+  const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
+
+  expect(res.statusCode).toBe(401);
+  expect(res.body.message).toBe("User not found");
+  // Phần 5: deleteSession được gọi với (userId, deviceId)
+  expect(deleteSession).toHaveBeenCalledWith(1, "test-device-uuid");
+});
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -832,13 +867,7 @@ describe("POST /api/auth/logout", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should logout successfully with valid token", async () => {
-    const { getRefreshToken } = require("../../src/config/redis");
-    const refreshToken = generateRefreshToken(1);
-
-    getRefreshToken.mockResolvedValue(refreshToken);
-    User.findByPk.mockResolvedValue({
-      id: 1, update: jest.fn().mockResolvedValue(true),
-    });
+    const refreshToken = generateRefreshToken(1, "test-device-uuid");
 
     const res = await request(app).post("/api/auth/logout").send({ refreshToken });
     expect(res.statusCode).toBe(200);
@@ -860,9 +889,10 @@ describe("POST /api/auth/logout", () => {
   });
 
   it("should return 200 even if token already revoked (idempotent)", async () => {
-    const { getRefreshToken } = require("../../src/config/redis");
-    const refreshToken = generateRefreshToken(1);
-    getRefreshToken.mockResolvedValue(null);
+    const refreshToken = generateRefreshToken(1, "test-device-uuid");
+
+    // Phần 5: logout idempotent — kể cả session không tồn tại vẫn return success
+    getSession.mockResolvedValue(null);
 
     const res = await request(app).post("/api/auth/logout").send({ refreshToken });
     expect(res.statusCode).toBe(200);

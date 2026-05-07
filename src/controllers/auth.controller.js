@@ -21,9 +21,10 @@ exports.register = catchAsync(async (req, res) => {
 
 exports.login = catchAsync(async (req, res) => {
   const data = await authService.login({
-    email:    req.body.email,
-    password: req.body.password,
-    ip:       req.ip,
+    email:     req.body.email,
+    password:  req.body.password,
+    ip:        req.ip,
+    userAgent: req.headers["user-agent"],
   });
   return sendResponse(res, 200, "success", "Login successfully", data);
 });
@@ -132,6 +133,8 @@ exports.changePassword = catchAsync(async (req, res) => {
     userId:          req.user.id,
     currentPassword: req.body.currentPassword,
     newPassword:     req.body.newPassword,
+    ip:              req.ip,
+    userAgent:       req.headers["user-agent"],
   });
   return sendResponse(res, 200, "success", data.message, {
     accessToken:  data.accessToken,

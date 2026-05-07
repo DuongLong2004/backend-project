@@ -2,6 +2,7 @@ const express    = require("express");
 const router     = express.Router();
 const rateLimit  = require("express-rate-limit");
 const authController = require("../controllers/auth.controller");
+const sessionController = require("../controllers/session.controller");
 const validate       = require("../middlewares/validate.middleware");
 const { verifyToken } = require("../middlewares/auth.middleware");
 const {
@@ -168,5 +169,54 @@ router.post(
   validate(changePasswordSchema),
   authController.changePassword
 );
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// SESSION MANAGEMENT (Phần 5 — Multi-device)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * @swagger
+ * /api/auth/sessions:
+ *   get:
+ *     summary: Lấy danh sách thiết bị đang đăng nhập
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Danh sách sessions kèm flag isCurrent cho device hiện tại
+ */
+router.get("/sessions", verifyToken, sessionController.listSessions);
+
+/**
+ * @swagger
+ * /api/auth/sessions:
+ *   delete:
+ *     summary: Đăng xuất khỏi tất cả thiết bị KHÁC (giữ thiết bị hiện tại)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ */
+router.delete("/sessions", verifyToken, sessionController.revokeOtherSessions);
+
+/**
+ * @swagger
+ * /api/auth/sessions/{deviceId}:
+ *   delete:
+ *     summary: Đăng xuất 1 thiết bị cụ thể (không được phép logout self)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: deviceId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Đã đăng xuất thiết bị thành công }
+ *       400: { description: Không thể logout self qua endpoint này }
+ */
+router.delete("/sessions/:deviceId", verifyToken, sessionController.revokeSession);
 
 module.exports = router;
