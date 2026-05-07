@@ -106,7 +106,7 @@ const app  = require("../../src/app");
 const User = require("../../src/models/User");
 const { Order, OrderItem, Product, Review, Wishlist } = require("../../src/models/index");
 const emailService = require("../../src/services/email.service");
-const { deleteRefreshToken } = require("../../src/config/redis");
+const { deleteRefreshToken, setRefreshToken } = require("../../src/config/redis");
 
 // ════════════════════════════════════════════════════════════════════════════
 // TEST CONSTANTS
@@ -629,6 +629,137 @@ describe("POST /api/auth/reset-password", () => {
       .send({ token: "valid_token" });
 
     expect(res.statusCode).toBe(400);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUTH TESTS — CHANGE PASSWORD (Phần 4)
+// ════════════════════════════════════════════════════════════════════════════
+
+describe("POST /api/auth/change-password", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  // Helper: tạo user mock với password hashed
+  const createMockUser = async (plainPassword = VALID_PASSWORD) => {
+    const hashed = await bcrypt.hash(plainPassword, 12);
+    return {
+      id: 1,
+      name: "Test User",
+      email: "test@gmail.com",
+      role: "user",
+      isVerified: true,
+      password: hashed,
+      update: jest.fn().mockResolvedValue(true),
+    };
+  };
+
+  it("should change password successfully and return new tokens (Option C)", async () => {
+    const mockUser = await createMockUser(VALID_PASSWORD);
+    User.findByPk.mockResolvedValue(mockUser);
+
+    const res = await request(app)
+      .post("/api/auth/change-password")
+      .send({
+        currentPassword: VALID_PASSWORD,
+        newPassword:     NEW_PASSWORD,
+      });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toContain("thành công");
+
+    // Option C: response phải có tokens mới
+    expect(res.body.data).toHaveProperty("accessToken");
+    expect(res.body.data).toHaveProperty("refreshToken");
+    expect(res.body.data).toHaveProperty("user");
+    expect(res.body.data.user.email).toBe("test@gmail.com");
+
+    // Password được hash, không phải plaintext
+    expect(mockUser.update).toHaveBeenCalledWith(
+      expect.objectContaining({ password: expect.any(String) })
+    );
+    expect(mockUser.update.mock.calls[0][0].password).not.toBe(NEW_PASSWORD);
+
+    // Refresh token cũ bị revoke + token mới được set
+    expect(deleteRefreshToken).toHaveBeenCalledWith(1);
+    expect(setRefreshToken).toHaveBeenCalledWith(1, expect.any(String));
+  });
+
+  it("should return 401 if currentPassword is wrong", async () => {
+    const mockUser = await createMockUser(VALID_PASSWORD);
+    User.findByPk.mockResolvedValue(mockUser);
+
+    const res = await request(app)
+      .post("/api/auth/change-password")
+      .send({
+        currentPassword: "WrongPass1234",
+        newPassword:     NEW_PASSWORD,
+      });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body.message).toContain("không đúng");
+
+    // Không update password, không revoke token
+    expect(mockUser.update).not.toHaveBeenCalled();
+    expect(deleteRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it("should return 400 if newPassword === currentPassword", async () => {
+    const mockUser = await createMockUser(VALID_PASSWORD);
+    User.findByPk.mockResolvedValue(mockUser);
+
+    const res = await request(app)
+      .post("/api/auth/change-password")
+      .send({
+        currentPassword: VALID_PASSWORD,
+        newPassword:     VALID_PASSWORD, // trùng
+      });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("khác mật khẩu hiện tại");
+    expect(mockUser.update).not.toHaveBeenCalled();
+  });
+
+  it("should return 400 if newPassword fails password policy", async () => {
+    const res = await request(app)
+      .post("/api/auth/change-password")
+      .send({
+        currentPassword: VALID_PASSWORD,
+        newPassword:     INVALID_PASSWORDS.TOO_SHORT,
+      });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body.message).toContain("ít nhất 8 ký tự");
+  });
+
+  it("should return 400 if currentPassword missing", async () => {
+    const res = await request(app)
+      .post("/api/auth/change-password")
+      .send({ newPassword: NEW_PASSWORD });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("should return 400 if newPassword missing", async () => {
+    const res = await request(app)
+      .post("/api/auth/change-password")
+      .send({ currentPassword: VALID_PASSWORD });
+
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("should return 404 if user not found (edge case)", async () => {
+    // Token valid nhưng user đã bị xóa khỏi DB
+    User.findByPk.mockResolvedValue(null);
+
+    const res = await request(app)
+      .post("/api/auth/change-password")
+      .send({
+        currentPassword: VALID_PASSWORD,
+        newPassword:     NEW_PASSWORD,
+      });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body.message).toBe("User not found");
   });
 });
 

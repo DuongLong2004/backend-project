@@ -570,3 +570,137 @@ exports.resetPassword = async ({ token, newPassword }) => {
     email:   user.email,
   };
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// CHANGE PASSWORD (Phần 4)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Change password — đổi mật khẩu khi user đã login.
+ *
+ * Flow:
+ *   1. Lấy user từ DB theo userId (đã verify token ở middleware)
+ *   2. Verify currentPassword bằng bcrypt.compare
+ *   3. Check newPassword ≠ currentPassword (chống đổi-mà-không-đổi)
+ *   4. Hash newPassword bằng bcrypt 12
+ *   5. Update password trong DB
+ *   6. Revoke ALL refresh tokens cũ (security)
+ *   7. Cấp accessToken + refreshToken MỚI ngay (UX tốt — Option C)
+ *   8. Save refreshToken mới vào Redis
+ *   9. Return tokens mới + user info để FE update localStorage
+ *
+ * @param {Object} payload
+ * @param {number} payload.userId           - ID từ JWT (req.user.id)
+ * @param {string} payload.currentPassword
+ * @param {string} payload.newPassword      - Đã được Joi validate password policy
+ * @returns {Promise<{message, accessToken, refreshToken, user}>}
+ *
+ * @throws {AppError} 401 nếu currentPassword sai
+ * @throws {AppError} 400 nếu newPassword === currentPassword
+ * @throws {AppError} 404 nếu user không tồn tại (edge case khi user bị xóa
+ *                       nhưng token chưa expire)
+ *
+ * @security OPTION C — Token rotation thay vì logout all:
+ *   - Clear refresh token cũ trong Redis → các device khác bị logout khi gọi /refresh
+ *   - Cấp tokens mới ngay → user hiện tại KHÔNG bị logout
+ *   - FE nhận tokens mới → update localStorage → tiếp tục dùng bình thường
+ *
+ *   So với resetPassword (clear all + redirect login):
+ *     - resetPassword: user QUÊN mật khẩu → đã không có session, OK redirect login
+ *     - changePassword: user ĐANG có session → giữ session là UX hợp lý
+ *
+ * @security Acceptable trade-off với access token cũ:
+ *   Access token cũ vẫn valid trong tối đa 15 phút (đến khi expire).
+ *   Nhưng refresh token cũ đã bị revoke → attacker không thể refresh được.
+ *   15 phút < session window thông thường → trade-off chấp nhận được.
+ *
+ * @future Khi triển khai multi-device session ở Phần 5:
+ *   - Thay deleteRefreshToken(userId) bằng "clear all except current device"
+ *   - Lúc đó user đổi password chỉ logout device khác, giữ device hiện tại
+ *   - Hiện tại single-device nên cứ clear all rồi cấp lại = behavior tương đương
+ */
+exports.changePassword = async ({ userId, currentPassword, newPassword }) => {
+  // Bước 1: Lấy user từ DB (cần password hash để verify)
+  const user = await User.findByPk(userId);
+  if (!user) {
+    // Edge case: token valid nhưng user đã bị xóa khỏi DB
+    throw new AppError("User not found", 404);
+  }
+
+  // Bước 2: Verify currentPassword
+  const isCurrentValid = await bcrypt.compare(currentPassword, user.password);
+  if (!isCurrentValid) {
+    logger.warn(`CHANGE PASSWORD FAIL: Wrong current password userId=${userId}`);
+    throw new AppError("Mật khẩu hiện tại không đúng", 401);
+  }
+
+  /*
+   * Bước 3: Check newPassword ≠ currentPassword.
+   *
+   * Compare plaintext newPassword với hash trong DB:
+   *   - Nếu match → user đang "đổi" thành chính password cũ → vô nghĩa, reject
+   *   - Tránh user submit form mà thực ra không thay đổi gì
+   *
+   * Note: Joi đã check newPassword khác về structure (validation),
+   *       còn đây là check semantic (đảm bảo thực sự có thay đổi).
+   */
+  const isSameAsCurrent = await bcrypt.compare(newPassword, user.password);
+  if (isSameAsCurrent) {
+    throw new AppError(
+      "Mật khẩu mới phải khác mật khẩu hiện tại",
+      400
+    );
+  }
+
+  // Bước 4: Hash newPassword với salt rounds 12 (consistent toàn project)
+  const hashed = await bcrypt.hash(newPassword, BCRYPT_SALT_ROUNDS);
+
+  // Bước 5: Update password trong DB
+  await user.update({ password: hashed });
+
+  /*
+   * Bước 6: Revoke refresh token cũ.
+   *
+   * Hiện tại schema Redis là `refresh:{userId}` — 1 user 1 token.
+   * deleteRefreshToken(userId) xóa key → các device khác (nếu có) gọi /refresh
+   * sẽ bị reject vì token cũ không còn trong Redis.
+   *
+   * Khi triển khai multi-device session ở Phần 5, structure sẽ thành
+   * `refresh:{userId}:{deviceId}` — lúc đó cần update logic để DEL pattern
+   * và NEU cần giữ device hiện tại thì exclude deviceId của nó.
+   */
+  await deleteRefreshToken(user.id);
+
+  /*
+   * Bước 7-8: Cấp tokens MỚI và save vào Redis.
+   *
+   * Đây là điểm khác biệt quan trọng với resetPassword:
+   *   - resetPassword: clear all tokens → FE redirect về /login
+   *   - changePassword: clear all + cấp tokens mới → FE giữ session hiện tại
+   *
+   * UX tốt hơn vì user đang authenticated, không có lý do phải logout họ.
+   * Pattern này được dùng bởi GitHub, Google, AWS Console, etc.
+   */
+  const accessToken  = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
+
+  await setRefreshToken(user.id, refreshToken);
+
+  logger.info(
+    `CHANGE PASSWORD SUCCESS: email=${user.email} userId=${user.id} — tokens rotated`
+  );
+
+  // Bước 9: Return tokens mới + user info để FE update localStorage
+  return {
+    message: "Đổi mật khẩu thành công!",
+    accessToken,
+    refreshToken,
+    user: {
+      id:         user.id,
+      name:       user.name,
+      email:      user.email,
+      role:       user.role,
+      isVerified: user.isVerified,
+    },
+  };
+};

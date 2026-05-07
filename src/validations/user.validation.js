@@ -63,7 +63,6 @@ exports.registerSchema = Joi.object({
 
 /**
  * Schema cho POST /api/auth/resend-verification.
- * Chỉ cần email — không cần password.
  */
 exports.resendVerificationSchema = Joi.object({
   email: Joi.string().email().required().messages({
@@ -75,7 +74,6 @@ exports.resendVerificationSchema = Joi.object({
 
 /**
  * Schema cho POST /api/auth/forgot-password.
- * Chỉ cần email — gửi link reset về email user.
  */
 exports.forgotPasswordSchema = Joi.object({
   email: Joi.string().email().required().messages({
@@ -87,12 +85,25 @@ exports.forgotPasswordSchema = Joi.object({
 
 /**
  * Schema cho POST /api/auth/reset-password.
- * Cần token từ URL email + mật khẩu mới (apply password policy chung).
  */
 exports.resetPasswordSchema = Joi.object({
   token: Joi.string().required().messages({
     "any.required": "Token là bắt buộc",
     "string.empty": "Token không được để trống",
+  }),
+  newPassword: passwordSchema,
+});
+
+/**
+ * Schema cho POST /api/auth/change-password (Phần 4).
+ *
+ * @note Check newPassword ≠ currentPassword làm ở service layer
+ *       vì cần bcrypt.compare với hash trong DB, không phải so sánh string.
+ */
+exports.changePasswordSchema = Joi.object({
+  currentPassword: Joi.string().required().messages({
+    "any.required": "Mật khẩu hiện tại là bắt buộc",
+    "string.empty": "Mật khẩu hiện tại không được để trống",
   }),
   newPassword: passwordSchema,
 });
