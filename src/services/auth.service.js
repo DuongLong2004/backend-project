@@ -1,6 +1,7 @@
 const bcrypt   = require("bcrypt");
 const crypto   = require("crypto");
 const jwt      = require("jsonwebtoken");
+const { OAuth2Client } = require("google-auth-library");
 const User     = require("../models/User");
 const AppError = require("../utils/AppError");
 const logger   = require("../utils/logger");
@@ -51,6 +52,17 @@ const VERIFICATION_TOKEN_EXPIRES_MS = 24 * 60 * 60 * 1000; // 24h
  *   - OWASP recommendation: 15-60 phút cho password reset
  */
 const PASSWORD_RESET_TOKEN_EXPIRES_MS = 60 * 60 * 1000; // 1h
+
+
+/**
+ * Google OAuth2 client — dùng để verify ID token từ FE (Phần 6).
+ *
+ * @design Khởi tạo 1 lần ở module-level để reuse, không khởi tạo lại mỗi request.
+ *         Library tự handle cache Google's public keys (JWKS) để verify chữ ký.
+ *
+ * @security verifyIdToken sẽ check chữ ký + audience + issuer + expiry tự động.
+ */
+const GOOGLE_OAUTH_CLIENT = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // ════════════════════════════════════════════════════════════════════════════
 // TOKEN HELPERS
@@ -249,6 +261,7 @@ exports.register = async ({ name, email, password }) => {
  *         Cùng browser login lại tạo session mới — chấp nhận trade-off này
  *         để đơn giản, không cần FE generate/lưu deviceId.
  */
+
 exports.login = async ({ email, password, ip, userAgent }) => {
   if (!email || !password) {
     throw new AppError("Email and password are required", 400);
@@ -260,16 +273,24 @@ exports.login = async ({ email, password, ip, userAgent }) => {
     throw new AppError("Invalid email or password", 401);
   }
 
+  /*
+   * Phần 6: Block login bằng password nếu user là Google-only (chưa có password).
+   * Tránh user bối rối khi không nhớ "đã đặt password cho account này chưa".
+   */
+  if (!user.password) {
+    logger.warn(`AUTH FAIL: Google-only user trying password login email=${email}`);
+    throw new AppError(
+      "Tài khoản này được tạo bằng Google. Vui lòng đăng nhập với Google.",
+      401
+    );
+  }
+
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) {
     logger.warn(`AUTH FAIL: Wrong password email=${email} ip=${ip}`);
     throw new AppError("Invalid email or password", 401);
   }
 
-  /*
-   * BLOCK login nếu chưa verify email.
-   * Đặt check NÀY SAU bcrypt compare để chống user enumeration.
-   */
   if (!user.isVerified) {
     logger.warn(`AUTH FAIL: Email not verified email=${email} ip=${ip}`);
     throw new AppError(
@@ -277,6 +298,8 @@ exports.login = async ({ email, password, ip, userAgent }) => {
       403
     );
   }
+  
+  // ... phần còn lại của function (deviceId, generate tokens, createSession...) GIỮ NGUYÊN
 
   // Phần 5: Generate deviceId mới + tạo session multi-device
   const deviceId    = crypto.randomUUID();
@@ -306,6 +329,7 @@ exports.login = async ({ email, password, ip, userAgent }) => {
       email:      user.email,
       role:       user.role,
       isVerified: user.isVerified,
+      hasPassword: !!user.password, // FE dùng để biết Google-only user
     },
   };
 };
@@ -445,6 +469,166 @@ exports.logout = async ({ refreshToken }) => {
     await deleteAllSessions(userId);
     logger.info(`LOGOUT SUCCESS (legacy): userId=${userId}`);
   }
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// LOGIN WITH GOOGLE (Phần 6)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Login/Register với Google OAuth — verify ID token từ FE rồi cấp tokens.
+ *
+ * Flow:
+ *   1. FE gửi `credential` (Google ID token) lên BE
+ *   2. BE verify chữ ký + audience (ai phát hành token, có đúng cho app này không)
+ *   3. Extract email + sub (Google ID) + name + picture từ payload
+ *   4. Tìm user theo googleId → nếu có thì login luôn
+ *   5. Nếu chưa có googleId → tìm theo email:
+ *        a) Có user (đã đăng ký thường) → AUTO-LINK googleId vào user (Q2=A)
+ *        b) Chưa có → tạo user mới (isVerified=true, password=null)
+ *   6. Generate deviceId + tokens + create session (giống login thường)
+ *
+ * @param {Object} payload
+ * @param {string} payload.credential - Google ID token (JWT) từ FE
+ * @param {string} payload.ip
+ * @param {string} payload.userAgent
+ * @returns {Promise<{accessToken, refreshToken, user, isNewUser}>}
+ *
+ * @throws {AppError} 400 nếu thiếu credential
+ * @throws {AppError} 401 nếu credential invalid (sai chữ ký, hết hạn, sai audience)
+ * @throws {AppError} 403 nếu Google không xác thực email (rất hiếm)
+ *
+ * @security verifyIdToken sẽ:
+ *   - Check chữ ký với Google's public keys (JWKS auto-cached)
+ *   - Check `aud` (audience) khớp với GOOGLE_CLIENT_ID
+ *   - Check `iss` (issuer) là accounts.google.com
+ *   - Check `exp` (expiry) chưa hết hạn
+ *   → Nếu bất kỳ check nào fail → throw error
+ *
+ * @design Q2=A — Auto-link: nếu user đã có account email/password rồi
+ *   login Google cùng email → tự động gắn googleId vào user cũ.
+ *   An toàn vì Google đã verify email = email thuộc về user thật.
+ */
+exports.loginWithGoogle = async ({ credential, ip, userAgent }) => {
+  if (!credential) {
+    throw new AppError("Google credential is required", 400);
+  }
+
+  // Bước 1-3: Verify ID token + extract payload
+  let payload;
+  try {
+    const ticket = await GOOGLE_OAUTH_CLIENT.verifyIdToken({
+      idToken:  credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch (err) {
+    logger.warn(`GOOGLE AUTH FAIL: Invalid credential ip=${ip} error=${err.message}`);
+    throw new AppError("Google credential không hợp lệ hoặc đã hết hạn", 401);
+  }
+
+  const {
+    sub:            googleId,        // Google's unique user ID
+    email,
+    email_verified: emailVerified,
+    name,
+    picture,
+  } = payload;
+
+  if (!emailVerified) {
+    /*
+     * Edge case rất hiếm — Google luôn verify email trước khi cho phép
+     * dùng OAuth. Nhưng vẫn check để chắc chắn không bị attacker fake.
+     */
+    logger.warn(`GOOGLE AUTH FAIL: Email not verified by Google email=${email}`);
+    throw new AppError("Google chưa xác thực email này", 403);
+  }
+
+  // Bước 4: Tìm user theo googleId (đã link Google trước đó)
+  let user = await User.findOne({ where: { googleId } });
+  let isNewUser = false;
+
+  if (!user) {
+    // Bước 5: Chưa link → tìm theo email
+    user = await User.findOne({ where: { email } });
+
+    if (user) {
+      /*
+       * Bước 5a: Q2=A — Auto-link googleId vào account đã tồn tại.
+       *
+       * User đã đăng ký bằng email/password trước, giờ login Google
+       * cùng email → coi như user xác nhận sở hữu cả 2 → link luôn.
+       *
+       * Sau khi link: user có thể login bằng password HOẶC Google.
+       * Nếu user chưa verify email (đăng ký thường nhưng chưa click link),
+       * giờ login Google cùng email → mark luôn isVerified=true vì Google
+       * đã verify giúp.
+       */
+      await user.update({
+        googleId,
+        isVerified: true, // Google đã verify email → coi như đã verify
+        avatar: user.avatar || picture, // Set avatar nếu chưa có
+      });
+      logger.info(
+        `GOOGLE AUTH LINK: Linked googleId to existing user email=${email} userId=${user.id}`
+      );
+    } else {
+      /*
+       * Bước 5b: User hoàn toàn mới → tạo account.
+       *
+       * - password = NULL (Google-only user, có thể set password sau qua /change-password)
+       * - isVerified = true (Google đã verify email)
+       * - avatar = picture từ Google
+       */
+      user = await User.create({
+        name:       name || email.split("@")[0],
+        email,
+        password:   null,
+        googleId,
+        role:       "user",
+        isVerified: true,
+        avatar:     picture || null,
+      });
+      isNewUser = true;
+      logger.info(
+        `GOOGLE AUTH NEW USER: email=${email} userId=${user.id}`
+      );
+    }
+  }
+
+  // Bước 6: Generate tokens + create session (giống login thường)
+  const deviceId     = crypto.randomUUID();
+  const deviceName   = parseDeviceName(userAgent);
+  const accessToken  = generateAccessToken(user, deviceId);
+  const refreshToken = generateRefreshToken(user, deviceId);
+
+  await createSession({
+    userId: user.id,
+    deviceId,
+    refreshToken,
+    deviceName,
+    userAgent: userAgent || "Unknown",
+    ip:        ip || "Unknown",
+  });
+
+  logger.info(
+    `GOOGLE LOGIN SUCCESS: email=${email} ip=${ip} device="${deviceName}" deviceId=${deviceId} isNewUser=${isNewUser}`
+  );
+
+  return {
+    accessToken,
+    refreshToken,
+    isNewUser,
+    user: {
+      id:         user.id,
+      name:       user.name,
+      email:      user.email,
+      role:       user.role,
+      isVerified: user.isVerified,
+      avatar:     user.avatar,
+      hasPassword: !!user.password, // FE dùng để biết Google-only user
+    },
+  };
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -593,6 +777,15 @@ exports.forgotPassword = async ({ email }) => {
    */
   if (!user.isVerified) {
     logger.warn(`FORGOT PASSWORD: Email not verified email=${email}`);
+    return; // Silent success
+  }
+
+  /*
+   * Phần 6: Google-only user không có password để reset.
+   * Trả silent success (không lộ thông tin user dùng Google).
+   */
+  if (!user.password) {
+    logger.warn(`FORGOT PASSWORD: Google-only user email=${email}`);
     return; // Silent success
   }
 
@@ -786,29 +979,52 @@ exports.changePassword = async ({
     throw new AppError("User not found", 404);
   }
 
-  // Bước 2: Verify currentPassword
-  const isCurrentValid = await bcrypt.compare(currentPassword, user.password);
-  if (!isCurrentValid) {
-    logger.warn(`CHANGE PASSWORD FAIL: Wrong current password userId=${userId}`);
-    throw new AppError("Mật khẩu hiện tại không đúng", 401);
-  }
-
   /*
-   * Bước 3: Check newPassword ≠ currentPassword.
+   *  (Q3=B): Phân nhánh theo user có password hay chưa.
    *
-   * Compare plaintext newPassword với hash trong DB:
-   *   - Nếu match → user đang "đổi" thành chính password cũ → vô nghĩa, reject
-   *   - Tránh user submit form mà thực ra không thay đổi gì
+   * Case A — Google-only user (user.password = null):
+   *   → "Set password lần đầu" — KHÔNG cần currentPassword.
+   *   → Sau khi set, user có thể login cả 2 cách (password + Google).
    *
-   * Note: Joi đã check newPassword khác về structure (validation),
-   *       còn đây là check semantic (đảm bảo thực sự có thay đổi).
+   * Case B — User đã có password (đăng ký thường hoặc đã set password trước đó):
+   *   → Flow cũ Phần 4: verify currentPassword + check newPassword khác.
    */
-  const isSameAsCurrent = await bcrypt.compare(newPassword, user.password);
-  if (isSameAsCurrent) {
-    throw new AppError(
-      "Mật khẩu mới phải khác mật khẩu hiện tại",
-      400
+  const isGoogleOnlyUser = !user.password;
+
+  if (isGoogleOnlyUser) {
+    logger.info(
+      `CHANGE PASSWORD: Setting password first time for Google-only user userId=${userId}`
     );
+    // Skip verify — Google-only user không có password để verify
+  } else {
+    // Bước 2: Verify currentPassword
+    if (!currentPassword) {
+      throw new AppError("Mật khẩu hiện tại là bắt buộc", 400);
+    }
+
+    const isCurrentValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isCurrentValid) {
+      logger.warn(`CHANGE PASSWORD FAIL: Wrong current password userId=${userId}`);
+      throw new AppError("Mật khẩu hiện tại không đúng", 401);
+    }
+
+    /*
+     * Bước 3: Check newPassword ≠ currentPassword.
+     *
+     * Compare plaintext newPassword với hash trong DB:
+     *   - Nếu match → user đang "đổi" thành chính password cũ → vô nghĩa, reject
+     *   - Tránh user submit form mà thực ra không thay đổi gì
+     *
+     * Note: Joi đã check newPassword khác về structure (validation),
+     *       còn đây là check semantic (đảm bảo thực sự có thay đổi).
+     */
+    const isSameAsCurrent = await bcrypt.compare(newPassword, user.password);
+    if (isSameAsCurrent) {
+      throw new AppError(
+        "Mật khẩu mới phải khác mật khẩu hiện tại",
+        400
+      );
+    }
   }
 
   // Bước 4: Hash newPassword với salt rounds 12 (consistent toàn project)
@@ -857,7 +1073,9 @@ exports.changePassword = async ({
 
   // Bước 9: Return tokens mới + user info để FE update localStorage
   return {
-    message: "Đổi mật khẩu thành công!",
+    message: isGoogleOnlyUser
+      ? "Đặt mật khẩu thành công! Bây giờ bạn có thể đăng nhập bằng email/password."
+      : "Đổi mật khẩu thành công!",
     accessToken,
     refreshToken,
     user: {
@@ -866,6 +1084,7 @@ exports.changePassword = async ({
       email:      user.email,
       role:       user.role,
       isVerified: user.isVerified,
+      hasPassword: true, // Sau changePassword luôn có password
     },
   };
 };

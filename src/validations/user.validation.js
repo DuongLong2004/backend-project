@@ -95,14 +95,18 @@ exports.resetPasswordSchema = Joi.object({
 });
 
 /**
- * Schema cho POST /api/auth/change-password (Phần 4).
+ * Schema đổi/đặt mật khẩu .
  *
- * @note Check newPassword ≠ currentPassword làm ở service layer
- *       vì cần bcrypt.compare với hash trong DB, không phải so sánh string.
+ * (Q3=B): currentPassword là OPTIONAL.
+ *   - User có password (đăng ký thường): BẮT BUỘC nhập currentPassword (service verify)
+ *   - User Google-only (password=null): KHÔNG cần currentPassword (set lần đầu)
+ *
+ * Validation chỉ check FORMAT (string không rỗng).
+ * Logic "có cần currentPassword hay không" được handle trong service layer
+ * dựa trên user.password === null hay không.
  */
 exports.changePasswordSchema = Joi.object({
-  currentPassword: Joi.string().required().messages({
-    "any.required": "Mật khẩu hiện tại là bắt buộc",
+  currentPassword: Joi.string().allow("").optional().messages({
     "string.empty": "Mật khẩu hiện tại không được để trống",
   }),
   newPassword: passwordSchema,

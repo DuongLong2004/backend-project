@@ -8,6 +8,7 @@ const sequelize     = require("../config/db");
  *   - id, name, email, password, age, role, avatar (cũ)
  *   - isVerified, verificationToken, verificationTokenExpiresAt (Phần 2)
  *   - passwordResetToken, passwordResetExpiresAt (Phần 3)
+ *   - googleId (Phần 6 — Google OAuth)
  */
 const User = sequelize.define(
   "User",
@@ -30,7 +31,8 @@ const User = sequelize.define(
     },
     password: {
       type:      DataTypes.STRING,
-      allowNull: false,
+      // Phần 6: cho phép NULL — Google-only user không có password
+      allowNull: true,
     },
     age: {
       type:      DataTypes.INTEGER,
@@ -101,6 +103,27 @@ const User = sequelize.define(
       allowNull:    true,
       defaultValue: null,
     },
+
+    // ─── Google OAuth fields (Phần 6) ───────────────────────────────────
+
+    /**
+     * Google sub ID — định danh duy nhất của user trên Google.
+     *
+     * - NULL: User đăng ký bằng email/password thường
+     * - Có giá trị: User đã link với Google account
+     *
+     * Một user có thể vừa có password vừa có googleId (đăng ký thường,
+     * sau đó login Google cùng email → auto-link).
+     *
+     * @security Lưu `sub` từ Google ID token, KHÔNG lưu email vì email
+     *           có thể thay đổi, còn sub là vĩnh viễn theo Google.
+     */
+    googleId: {
+      type:         DataTypes.STRING,
+      allowNull:    true,
+      unique:       true,
+      defaultValue: null,
+    },
   },
   {
     tableName:  "users",
@@ -111,6 +134,8 @@ const User = sequelize.define(
       { fields: ["verificationToken"],   name: "idx_users_verification_token" },
       // Index passwordResetToken (Phần 3) để reset endpoint query nhanh
       { fields: ["passwordResetToken"],  name: "idx_users_password_reset_token" },
+      // Index googleId (Phần 6) để Google login query nhanh
+      { fields: ["googleId"],            name: "idx_users_googleId" },
     ],
   }
 );

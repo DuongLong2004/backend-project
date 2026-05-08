@@ -219,4 +219,57 @@ router.delete("/sessions", verifyToken, sessionController.revokeOtherSessions);
  */
 router.delete("/sessions/:deviceId", verifyToken, sessionController.revokeSession);
 
+// ════════════════════════════════════════════════════════════════════════════
+// GOOGLE OAUTH (Phần 6)
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Rate limit cho Google login: 10 lần / 15 phút / IP.
+ *
+ * Looser hơn login thường (5/15min) vì:
+ *   - Google đã verify user — ít risk brute force
+ *   - User có thể click nhầm hoặc Google popup bị đóng → cần retry vài lần
+ */
+const googleLoginLimiter = isTest
+  ? noopLimiter
+  : rateLimit({
+      windowMs: 15 * 60 * 1000,
+      max:      10,
+      message:  {
+        status:  "error",
+        message: "Quá nhiều lần thử đăng nhập Google. Vui lòng thử lại sau 15 phút.",
+        data:    null,
+      },
+    });
+
+/**
+ * @swagger
+ * /api/auth/google:
+ *   post:
+ *     summary: Đăng nhập / Đăng ký bằng Google OAuth
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [credential]
+ *             properties:
+ *               credential:
+ *                 type: string
+ *                 description: Google ID token (JWT) từ @react-oauth/google
+ *                 example: "eyJhbGciOi..."
+ *     responses:
+ *       200:
+ *         description: |
+ *           Đăng nhập / đăng ký Google thành công.
+ *           Response trả về accessToken + refreshToken + user + isNewUser.
+ *       400: { description: Thiếu credential }
+ *       401: { description: Credential không hợp lệ hoặc đã hết hạn }
+ *       403: { description: Google chưa xác thực email }
+ *       429: { description: Quá nhiều lần thử }
+ */
+router.post("/google", googleLoginLimiter, authController.googleLogin);
+
 module.exports = router;

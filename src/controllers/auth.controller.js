@@ -142,3 +142,44 @@ exports.changePassword = catchAsync(async (req, res) => {
     user:         data.user,
   });
 });
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// GOOGLE OAUTH 
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/auth/google
+ *
+ * @body { credential: string } — Google ID token (JWT) từ FE @react-oauth/google
+ * @returns 200 với { accessToken, refreshToken, user, isNewUser }
+ *
+ * Flow:
+ *   1. User click "Đăng nhập với Google" → @react-oauth/google popup
+ *   2. Google trả về `credential` (ID token)
+ *   3. FE POST credential lên endpoint này
+ *   4. BE verify ID token với Google → login/register user
+ *   5. BE trả tokens → FE lưu localStorage + redirect home
+ *
+ * @note Phần 6 — không cần verifyToken middleware vì user chưa login.
+ *       Endpoint này chính LÀ login flow.
+ */
+exports.googleLogin = catchAsync(async (req, res) => {
+  const data = await authService.loginWithGoogle({
+    credential: req.body.credential,
+    ip:         req.ip,
+    userAgent:  req.headers["user-agent"],
+  });
+  return sendResponse(
+    res,
+    200,
+    "success",
+    data.isNewUser ? "Đăng ký Google thành công!" : "Đăng nhập Google thành công!",
+    {
+      accessToken:  data.accessToken,
+      refreshToken: data.refreshToken,
+      isNewUser:    data.isNewUser,
+      user:         data.user,
+    }
+  );
+});
