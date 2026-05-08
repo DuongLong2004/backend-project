@@ -55,6 +55,31 @@ const PASSWORD_RESET_TOKEN_EXPIRES_MS = 60 * 60 * 1000; // 1h
 
 
 /**
+ * Account Lockout — số lần login sai password tối đa cho phép (Phần 8).
+ *
+ * Industry standard:
+ *   - GitHub: 10 lần / IP
+ *   - Google: ~5 lần / account
+ *   - Microsoft: 10 lần / account
+ *
+ * Decision Q1=A: 5 lần — cân bằng UX (user gõ sai vài lần OK) và security
+ *                       (chống brute-force hiệu quả).
+ */
+const MAX_LOGIN_ATTEMPTS = 5;
+
+/**
+ * Account Lockout — thời gian khoá tài khoản sau khi đạt MAX_LOGIN_ATTEMPTS.
+ *
+ * Decision Q2=A: Cố định 15 phút (không progressive lockout).
+ *   - Đủ lâu để chặn brute-force tự động (15 min × 5 attempts/lock = 1 phút/attempt
+ *     → quá chậm cho attacker)
+ *   - Đủ ngắn để user thật không quá khó chịu (uống cafe rồi quay lại)
+ *   - Đơn giản, dễ giải thích phỏng vấn
+ */
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 phút
+
+
+/**
  * Google OAuth2 client — dùng để verify ID token từ FE (Phần 6).
  *
  * @design Khởi tạo 1 lần ở module-level để reuse, không khởi tạo lại mỗi request.
@@ -119,6 +144,20 @@ const generateRefreshToken = (user, deviceId) =>
  *         - Dễ debug bằng mắt
  */
 const generateSecureToken = () => crypto.randomBytes(32).toString("hex");
+
+
+/**
+ * Check tài khoản có đang bị khoá hay không (Phần 8).
+ *
+ * @param {Object} user - User instance từ DB
+ * @returns {boolean} true nếu đang bị khoá (lockedUntil > now)
+ *
+ * @design Helper inline thay vì instance method để dễ test và reuse.
+ *         Nếu lockedUntil = null hoặc < now → không bị khoá.
+ */
+const isAccountLocked = (user) => {
+  return user.lockedUntil && new Date(user.lockedUntil) > new Date();
+};
 
 /**
  * Parse User-Agent string → friendly device name (Phần 5).
@@ -228,18 +267,24 @@ exports.register = async ({ name, email, password }) => {
 };
 
 // ════════════════════════════════════════════════════════════════════════════
-// LOGIN (Phần 5 — Multi-device)
+// LOGIN (Phần 5 — Multi-device + Phần 8 — Account Lockout)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Login user với multi-device session support.
+ * Login user với multi-device session + account lockout.
  *
- * Flow Phần 5:
- *   1. Verify email/password (giống Phần 1-4)
- *   2. Check email đã verify chưa (giống Phần 2)
- *   3. Generate deviceId UUID MỚI cho phiên này
- *   4. Issue access + refresh tokens kèm deviceId trong payload
- *   5. Lưu session vào Redis: session:{userId}:{deviceId} = { refreshToken, metadata }
+ * Flow Phần 5 + 8:
+ *   1. Validate input email/password
+ *   2. Tìm user trong DB → reject nếu không có (anti-enumeration)
+ *   3. [Phần 8] Check account đang bị lock → reject 423 với time remaining
+ *   4. [Phần 6] Check Google-only user → reject login bằng password
+ *   5. Compare password bằng bcrypt:
+ *      - SAI → tăng failedLoginAttempts:
+ *           + Nếu đạt MAX (5) → set lockedUntil + gửi email cảnh báo
+ *           + Throw 401 với attemptsRemaining (FE hiển thị warning)
+ *      - ĐÚNG → reset counter + tiếp tục flow
+ *   6. Check email đã verify chưa (Phần 2)
+ *   7. Generate deviceId + tokens + create session (Phần 5)
  *
  * @param {Object} payload
  * @param {string} payload.email
@@ -250,18 +295,29 @@ exports.register = async ({ name, email, password }) => {
  * @returns {Promise<{accessToken, refreshToken, user}>}
  *
  * @throws {AppError} 400 nếu thiếu email/password
- * @throws {AppError} 401 nếu email/password sai
+ * @throws {AppError} 401 nếu email/password sai (kèm attemptsRemaining nếu chưa lock)
  * @throws {AppError} 403 nếu chưa verify email
+ * @throws {AppError} 423 (Locked) nếu account đang bị khoá — kèm minutesRemaining
  *
- * @security Generic error "Invalid email or password" để chống user enumeration.
- *           Check `isVerified` đặt SAU bcrypt compare để timing attack không
- *           lộ được email nào đã đăng ký.
+ * @security Anti-enumeration:
+ *   - Generic error "Invalid email or password" cho cả email không tồn tại
+ *     và password sai
+ *   - Lock check chỉ thực hiện sau khi tìm thấy user → user không tồn tại
+ *     không thể bị lock (không cần lock email không có thật)
  *
- * @design Decision Q1=A: Mỗi lần login = deviceId mới (UUID random).
- *         Cùng browser login lại tạo session mới — chấp nhận trade-off này
- *         để đơn giản, không cần FE generate/lưu deviceId.
+ * @security Counter chỉ tăng khi:
+ *   - User TỒN TẠI trong DB (tránh attacker spam email không có để fill DB)
+ *   - User CÓ password (Google-only user không có password để brute force)
+ *   → Hai check này đứng TRƯỚC bcrypt.compare để bảo vệ resource.
+ *
+ * @design Q3=A: Reset counter về 0 khi login thành công.
+ *         Trade-off: attacker đoán đúng pass cuối vẫn vào được, nhưng
+ *         đơn giản hơn và phù hợp với user behavior thực tế (user thật
+ *         hay gõ sai vài lần rồi nhớ ra password đúng).
+ *
+ * @design Q4=A: Gửi email cảnh báo khi lock — best-effort, không block flow.
+ *         Email fail không ảnh hưởng đến việc account đã được lock trong DB.
  */
-
 exports.login = async ({ email, password, ip, userAgent }) => {
   if (!email || !password) {
     throw new AppError("Email and password are required", 400);
@@ -274,8 +330,42 @@ exports.login = async ({ email, password, ip, userAgent }) => {
   }
 
   /*
+   * Phần 8 — Bước 3: Check account đang bị lock.
+   *
+   * Đặt check này NGAY SAU khi tìm user (trước cả Google-only check)
+   * để tránh leak thông tin: nếu để check Google-only trước thì attacker
+   * có thể phân biệt được user Google-only (không bao giờ bị lock) với
+   * user thường (có thể bị lock).
+   */
+  if (isAccountLocked(user)) {
+    const minutesRemaining = Math.ceil(
+      (new Date(user.lockedUntil) - new Date()) / 60000
+    );
+    logger.warn(
+      `AUTH FAIL: Account locked email=${email} ip=${ip} minutesRemaining=${minutesRemaining}`
+    );
+
+    /*
+     * 423 Locked (RFC 4918): "The source or destination resource is locked".
+     * Phù hợp hơn 401 vì đây không phải lỗi credentials, mà là policy block.
+     * FE dùng status code này để hiển thị countdown thay vì error thường.
+     */
+    const error = new AppError(
+      `Tài khoản tạm thời bị khoá do đăng nhập sai nhiều lần. Vui lòng thử lại sau ${minutesRemaining} phút.`,
+      423
+    );
+    // Attach metadata cho FE hiển thị countdown chính xác
+    error.lockedUntil      = user.lockedUntil;
+    error.minutesRemaining = minutesRemaining;
+    throw error;
+  }
+
+  /*
    * Phần 6: Block login bằng password nếu user là Google-only (chưa có password).
    * Tránh user bối rối khi không nhớ "đã đặt password cho account này chưa".
+   *
+   * Note: Google-only user KHÔNG tăng failedLoginAttempts vì không có password
+   *       để brute force. Reject sớm tiết kiệm bcrypt CPU.
    */
   if (!user.password) {
     logger.warn(`AUTH FAIL: Google-only user trying password login email=${email}`);
@@ -286,9 +376,86 @@ exports.login = async ({ email, password, ip, userAgent }) => {
   }
 
   const isMatch = await bcrypt.compare(password, user.password);
+
   if (!isMatch) {
-    logger.warn(`AUTH FAIL: Wrong password email=${email} ip=${ip}`);
-    throw new AppError("Invalid email or password", 401);
+    /*
+     * Phần 8 — Password SAI: Tăng counter, lock nếu đạt threshold.
+     */
+    const newAttempts = user.failedLoginAttempts + 1;
+    const updates = { failedLoginAttempts: newAttempts };
+
+    let shouldSendLockEmail = false;
+    let lockUntil           = null;
+
+    if (newAttempts >= MAX_LOGIN_ATTEMPTS) {
+      // Đạt threshold → lock account
+      lockUntil          = new Date(Date.now() + LOCKOUT_DURATION_MS);
+      updates.lockedUntil = lockUntil;
+      shouldSendLockEmail = true;
+
+      logger.warn(
+        `ACCOUNT LOCKED: email=${email} ip=${ip} attempts=${newAttempts} unlockAt=${lockUntil.toISOString()}`
+      );
+    } else {
+      logger.warn(
+        `AUTH FAIL: Wrong password email=${email} ip=${ip} attempts=${newAttempts}/${MAX_LOGIN_ATTEMPTS}`
+      );
+    }
+
+    await user.update(updates);
+
+    /*
+     * Best-effort gửi email cảnh báo (Q4=A).
+     * Wrap try-catch để KHÔNG block flow lock — email fail vẫn lock được.
+     */
+    if (shouldSendLockEmail) {
+      try {
+        await emailService.sendAccountLockedEmail({
+          to:             user.email,
+          userName:       user.name,
+          unlockTime:     lockUntil,
+          maxAttempts:    MAX_LOGIN_ATTEMPTS,
+          lockoutMinutes: Math.floor(LOCKOUT_DURATION_MS / 60000),
+        });
+      } catch (err) {
+        logger.warn(
+          `EMAIL WARNING: Failed to send lock notification to ${email}. ` +
+          `Account is still locked. Error: ${err.message}`
+        );
+      }
+
+      // Throw error 423 ngay (không cần đợi user thử lại)
+      const error = new AppError(
+        `Bạn đã nhập sai mật khẩu ${MAX_LOGIN_ATTEMPTS} lần. Tài khoản tạm khoá ${Math.floor(LOCKOUT_DURATION_MS / 60000)} phút. Email cảnh báo đã được gửi đến ${user.email}.`,
+        423
+      );
+      error.lockedUntil      = lockUntil;
+      error.minutesRemaining = Math.floor(LOCKOUT_DURATION_MS / 60000);
+      throw error;
+    }
+
+    /*
+     * Chưa đạt threshold → throw 401 kèm attemptsRemaining để FE hiển thị
+     * warning "Bạn còn X lần thử trước khi tài khoản bị khoá".
+     */
+    const attemptsRemaining = MAX_LOGIN_ATTEMPTS - newAttempts;
+    const error = new AppError("Invalid email or password", 401);
+    error.attemptsRemaining = attemptsRemaining;
+    throw error;
+  }
+
+  /*
+   * Password ĐÚNG (Phần 8 — Q3=A): Reset counter về 0 + clear lockedUntil.
+   *
+   * Chỉ update DB khi cần (counter > 0 hoặc có lockedUntil) để tránh write
+   * không cần thiết. Đa số login thành công thì counter đã = 0 từ trước.
+   */
+  if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+    await user.update({
+      failedLoginAttempts: 0,
+      lockedUntil:         null,
+    });
+    logger.info(`AUTH RESET: Reset failed attempts for email=${email}`);
   }
 
   if (!user.isVerified) {
@@ -298,8 +465,6 @@ exports.login = async ({ email, password, ip, userAgent }) => {
       403
     );
   }
-  
-  // ... phần còn lại của function (deviceId, generate tokens, createSession...) GIỮ NGUYÊN
 
   // Phần 5: Generate deviceId mới + tạo session multi-device
   const deviceId    = crypto.randomUUID();

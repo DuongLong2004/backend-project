@@ -67,10 +67,26 @@ module.exports = (err, req, res, next) => {
   }
 
   // ─── Default ─────────────────────────────────────────
+  /*
+   * Phần 8 (Account Lockout) — Spread custom fields từ AppError vào response.
+   *
+   * Một số AppError có thêm field metadata (ngoài statusCode + message):
+   *   - 423 Locked: { lockedUntil, minutesRemaining }
+   *   - 401 Unauthorized (login fail): { attemptsRemaining }
+   *
+   * Whitelist các field được phép leak ra FE — KHÔNG dùng spread {...err}
+   * vì sẽ leak cả `stack`, `name`, etc. (security risk).
+   */
+  const customFields = {};
+  if (err.lockedUntil       !== undefined) customFields.lockedUntil       = err.lockedUntil;
+  if (err.minutesRemaining  !== undefined) customFields.minutesRemaining  = err.minutesRemaining;
+  if (err.attemptsRemaining !== undefined) customFields.attemptsRemaining = err.attemptsRemaining;
+
   res.status(err.statusCode).json({
     status:  err.status,
     message: err.message || "Internal Server Error",
     data:    null,
+    ...customFields,
     // ✅ Chỉ trả stack trace khi development
     ...(isDev && { stack: err.stack }),
   });
