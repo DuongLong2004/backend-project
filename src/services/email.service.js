@@ -1,19 +1,9 @@
-const { transporter } = require("../config/email");
-const logger          = require("../utils/logger");
+const { sendEmail } = require("../config/email");
+const logger        = require("../utils/logger");
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ════════════════════════════════════════════════════════════════════════════
-
-/**
- * Sender info — hiển thị trong email user nhận được.
- *
- * Format: "Display Name <email@gmail.com>"
- * - Display Name: Tên brand hiển thị (vd: "Backend Project")
- * - Email: Phải MATCH với EMAIL_USER trong .env, không được khác
- */
-const FROM_NAME    = process.env.EMAIL_FROM_NAME || "Backend Project";
-const FROM_ADDRESS = process.env.EMAIL_USER;
 
 /**
  * Frontend URL — base URL để generate verify/reset link.
@@ -117,15 +107,6 @@ const buildVerifyEmailHtml = ({ userName, verifyUrl, expiresHours }) => `
 
 /**
  * HTML template cho email reset password.
- *
- * @param {Object} options
- * @param {string} options.userName     - Tên user nhận email
- * @param {string} options.resetUrl     - Link đầy đủ kèm token
- * @param {number} options.expiresMinutes - Số phút token còn hiệu lực
- * @returns {string} HTML content
- *
- * @design Màu đỏ/cam thay vì purple để user PHÂN BIỆT với email verify.
- *         Dùng warning style để nhấn mạnh tính bảo mật.
  */
 const buildResetPasswordEmailHtml = ({ userName, resetUrl, expiresMinutes }) => `
 <!DOCTYPE html>
@@ -209,7 +190,9 @@ const buildResetPasswordEmailHtml = ({ userName, resetUrl, expiresMinutes }) => 
 </html>
 `;
 
-
+/**
+ * HTML template cho email cảnh báo account locked.
+ */
 const buildAccountLockedEmailHtml = ({ userName, unlockTimeStr, maxAttempts, lockoutMinutes }) => `
 <!DOCTYPE html>
 <html lang="vi">
@@ -223,29 +206,29 @@ const buildAccountLockedEmailHtml = ({ userName, unlockTimeStr, maxAttempts, loc
     <tr>
       <td align="center">
         <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
- 
+
           <!-- Header -->
           <tr>
             <td style="background-color:#F59E0B;padding:30px;text-align:center;border-radius:8px 8px 0 0;">
               <h1 style="color:#ffffff;margin:0;font-size:24px;">⚠️ Cảnh báo bảo mật</h1>
             </td>
           </tr>
- 
+
           <!-- Body -->
           <tr>
             <td style="padding:40px 30px;">
               <h2 style="color:#333333;margin:0 0 20px 0;">Xin chào ${userName}! 👋</h2>
- 
+
               <p style="color:#666666;font-size:16px;line-height:1.6;margin:0 0 20px 0;">
                 Chúng tôi vừa phát hiện <strong>${maxAttempts} lần đăng nhập thất bại liên tiếp</strong>
                 vào tài khoản của bạn tại <strong>Backend Project</strong>.
               </p>
- 
+
               <p style="color:#666666;font-size:16px;line-height:1.6;margin:0 0 20px 0;">
                 Để bảo vệ tài khoản, chúng tôi đã <strong style="color:#DC2626;">tạm khoá đăng nhập</strong>
                 trong vòng <strong>${lockoutMinutes} phút</strong>.
               </p>
- 
+
               <!-- Unlock time box -->
               <div style="background-color:#FEF3C7;border-left:4px solid #F59E0B;padding:16px;border-radius:4px;margin:25px 0;">
                 <p style="color:#92400E;font-size:14px;margin:0 0 8px 0;font-weight:bold;">
@@ -255,7 +238,7 @@ const buildAccountLockedEmailHtml = ({ userName, unlockTimeStr, maxAttempts, loc
                   ${unlockTimeStr}
                 </p>
               </div>
- 
+
               <!-- Warning box -->
               <div style="background-color:#FEF2F2;border-left:4px solid #DC2626;padding:16px;border-radius:4px;margin:25px 0;">
                 <p style="color:#991B1B;font-size:14px;line-height:1.6;margin:0;">
@@ -265,20 +248,20 @@ const buildAccountLockedEmailHtml = ({ userName, unlockTimeStr, maxAttempts, loc
                   • Kiểm tra các phiên đăng nhập đang hoạt động và đăng xuất các phiên lạ
                 </p>
               </div>
- 
+
               <p style="color:#666666;font-size:14px;line-height:1.6;margin:20px 0 0 0;">
                 ✅ Nếu chính bạn quên mật khẩu, vui lòng dùng chức năng
                 <strong>"Quên mật khẩu"</strong> để đặt lại sau khi tài khoản được mở khoá.
               </p>
- 
+
               <div style="border-top:1px solid #eeeeee;margin:30px 0;"></div>
- 
+
               <p style="color:#999999;font-size:13px;line-height:1.6;margin:0;">
                 Email này được gửi tự động khi hệ thống phát hiện hoạt động đáng ngờ.
               </p>
             </td>
           </tr>
- 
+
           <!-- Footer -->
           <tr>
             <td style="background-color:#f9f9f9;padding:20px 30px;text-align:center;border-radius:0 0 8px 8px;">
@@ -287,7 +270,7 @@ const buildAccountLockedEmailHtml = ({ userName, unlockTimeStr, maxAttempts, loc
               </p>
             </td>
           </tr>
- 
+
         </table>
       </td>
     </tr>
@@ -297,7 +280,7 @@ const buildAccountLockedEmailHtml = ({ userName, unlockTimeStr, maxAttempts, loc
 `;
 
 // ════════════════════════════════════════════════════════════════════════════
-// EMAIL SENDERS
+// EMAIL SENDERS — dùng sendEmail() unified (auto pick Resend/Nodemailer)
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -308,106 +291,54 @@ const buildAccountLockedEmailHtml = ({ userName, unlockTimeStr, maxAttempts, loc
  * @param {string} payload.userName  - Tên user (hiển thị trong email)
  * @param {string} payload.token     - Verification token
  *
- * @returns {Promise<void>}
- *
- * @throws {Error} Nếu gửi email fail (network/SMTP error).
- *                 Caller (auth.service) sẽ catch và log warning,
- *                 KHÔNG throw lên user — vì user đã register thành công.
- *
  * @design Best-effort delivery: Register flow KHÔNG block bởi email send.
  *         Nếu email fail → user dùng "Resend verification email" để retry.
  */
 exports.sendVerificationEmail = async ({ to, userName, token }) => {
-  /*
-   * Generate verify URL trỏ về FRONTEND.
-   *
-   * FE nhận token từ query string → call API:
-   *   GET /api/auth/verify-email?token=xxx
-   *
-   * Lý do dùng FE URL thay vì BE URL:
-   *   - User click link trong email → mở FE → user thấy UI đẹp
-   *   - Nếu click link BE → user thấy raw JSON response, không UX
-   */
   const verifyUrl = `${FRONTEND_URL}/verify-email?token=${token}`;
 
-  const mailOptions = {
-    from:    `"${FROM_NAME}" <${FROM_ADDRESS}>`,
-    to,
-    subject: "🔐 Xác thực email tài khoản của bạn",
-    html:    buildVerifyEmailHtml({
-      userName,
-      verifyUrl,
-      expiresHours: 24,
-    }),
-  };
-
   try {
-    const info = await transporter.sendMail(mailOptions);
-    logger.info(`EMAIL SENT: verify to=${to} messageId=${info.messageId}`);
+    const { messageId } = await sendEmail({
+      to,
+      subject: "🔐 Xác thực email tài khoản của bạn",
+      html: buildVerifyEmailHtml({
+        userName,
+        verifyUrl,
+        expiresHours: 24,
+      }),
+    });
+    logger.info(`EMAIL SENT: verify to=${to} messageId=${messageId}`);
   } catch (err) {
     logger.error(`EMAIL FAILED: verify to=${to} error=${err.message}`);
-    throw err; // Caller quyết định xử lý
+    throw err;
   }
 };
 
 /**
  * Gửi email reset password.
- *
- * @param {Object} payload
- * @param {string} payload.to        - Email người nhận
- * @param {string} payload.userName  - Tên user (hiển thị trong email)
- * @param {string} payload.token     - Password reset token
- *
- * @returns {Promise<void>}
- *
- * @throws {Error} Nếu gửi email fail. Caller (auth.service.forgotPassword)
- *                 sẽ catch và log — return success cho user (anti-enumeration).
- *
- * @design FE URL: /reset-password?token=xxx
- *         Token expire 1h (60 phút) → nhấn mạnh trong email template.
  */
 exports.sendPasswordResetEmail = async ({ to, userName, token }) => {
   const resetUrl = `${FRONTEND_URL}/reset-password?token=${token}`;
 
-  const mailOptions = {
-    from:    `"${FROM_NAME}" <${FROM_ADDRESS}>`,
-    to,
-    subject: "🔐 Yêu cầu đặt lại mật khẩu",
-    html:    buildResetPasswordEmailHtml({
-      userName,
-      resetUrl,
-      expiresMinutes: 60,
-    }),
-  };
-
   try {
-    const info = await transporter.sendMail(mailOptions);
-    logger.info(`EMAIL SENT: reset-password to=${to} messageId=${info.messageId}`);
+    const { messageId } = await sendEmail({
+      to,
+      subject: "🔐 Yêu cầu đặt lại mật khẩu",
+      html: buildResetPasswordEmailHtml({
+        userName,
+        resetUrl,
+        expiresMinutes: 60,
+      }),
+    });
+    logger.info(`EMAIL SENT: reset-password to=${to} messageId=${messageId}`);
   } catch (err) {
     logger.error(`EMAIL FAILED: reset-password to=${to} error=${err.message}`);
     throw err;
   }
 };
 
-
 /**
  * Gửi email cảnh báo tài khoản bị khoá do đăng nhập sai nhiều lần (Phần 8).
- *
- * @param {Object} payload
- * @param {string} payload.to              - Email người nhận
- * @param {string} payload.userName        - Tên user (hiển thị trong email)
- * @param {Date}   payload.unlockTime      - Thời điểm hết khoá (Date object)
- * @param {number} payload.maxAttempts     - Số lần sai tối đa (mặc định 5)
- * @param {number} payload.lockoutMinutes  - Thời gian khoá tính theo phút (mặc định 15)
- *
- * @returns {Promise<void>}
- *
- * @throws {Error} Nếu gửi email fail. Caller (auth.service.login) sẽ catch
- *                 và log warning — KHÔNG block flow lock account, vì lock
- *                 đã được lưu trong DB rồi.
- *
- * @design Best-effort: Email chỉ là thông báo phụ, không phải critical path.
- *         Nếu email fail vẫn phải lock được account → caller wrap try-catch.
  */
 exports.sendAccountLockedEmail = async ({
   to,
@@ -416,10 +347,7 @@ exports.sendAccountLockedEmail = async ({
   maxAttempts = 5,
   lockoutMinutes = 15,
 }) => {
-  /*
-   * Format unlock time theo timezone Việt Nam cho user dễ đọc.
-   * Format: "20:30 08/05/2026"
-   */
+  // Format unlock time theo timezone Việt Nam
   const unlockTimeStr = unlockTime.toLocaleString("vi-VN", {
     timeZone: "Asia/Ho_Chi_Minh",
     hour:     "2-digit",
@@ -428,24 +356,21 @@ exports.sendAccountLockedEmail = async ({
     month:    "2-digit",
     year:     "numeric",
   });
- 
-  const mailOptions = {
-    from:    `"${FROM_NAME}" <${FROM_ADDRESS}>`,
-    to,
-    subject: "⚠️ Cảnh báo: Tài khoản của bạn vừa bị tạm khoá",
-    html:    buildAccountLockedEmailHtml({
-      userName,
-      unlockTimeStr,
-      maxAttempts,
-      lockoutMinutes,
-    }),
-  };
- 
+
   try {
-    const info = await transporter.sendMail(mailOptions);
-    logger.info(`EMAIL SENT: account-locked to=${to} messageId=${info.messageId}`);
+    const { messageId } = await sendEmail({
+      to,
+      subject: "⚠️ Cảnh báo: Tài khoản của bạn vừa bị tạm khoá",
+      html: buildAccountLockedEmailHtml({
+        userName,
+        unlockTimeStr,
+        maxAttempts,
+        lockoutMinutes,
+      }),
+    });
+    logger.info(`EMAIL SENT: account-locked to=${to} messageId=${messageId}`);
   } catch (err) {
     logger.error(`EMAIL FAILED: account-locked to=${to} error=${err.message}`);
-    throw err; // Caller quyết định xử lý (best-effort, không block flow lock)
+    throw err;
   }
 };

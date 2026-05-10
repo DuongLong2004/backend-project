@@ -33,6 +33,7 @@
     "mysql2": "^3.16.0",
     "nodemailer": "^8.0.7",
     "redis": "^5.12.1",
+    "resend": "^6.12.3",
     "sequelize": "^6.37.7",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
