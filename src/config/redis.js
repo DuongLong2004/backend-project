@@ -3,17 +3,37 @@ const logger = require("../utils/logger");
 
 const REFRESH_TOKEN_TTL = 60 * 60 * 24 * 7; // 7 ngày
 
-// ════════════════════════════════════════════════════════════════════════════
-// REDIS CLIENT
-// ════════════════════════════════════════════════════════════════════════════
+/*
+ * ════════════════════════════════════════════════════════════════════════════
+ * DUAL-MODE REDIS CONFIG
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Hỗ trợ 2 cách config (theo độ ưu tiên):
+ *
+ *   1. REDIS_URL  → connection string Railway/Upstash
+ *      VD: redis://default:password@host:port
+ *      VD TLS: rediss://default:password@host:port
+ *
+ *   2. REDIS_HOST + REDIS_PORT + REDIS_PASSWORD  → local development
+ *
+ * Logic: nếu có URL → dùng URL, không thì fallback từng env riêng.
+ * ════════════════════════════════════════════════════════════════════════════
+ */
 
-const client = createClient({
-  socket: {
-    host: process.env.REDIS_HOST || "localhost",
-    port: parseInt(process.env.REDIS_PORT) || 6379,
-  },
-  ...(process.env.REDIS_PASSWORD && { password: process.env.REDIS_PASSWORD }),
-});
+const redisUrl = process.env.REDIS_URL;
+
+const clientOptions = redisUrl
+  ? { url: redisUrl } // Mode 1: Production
+  : {
+      // Mode 2: Local development
+      socket: {
+        host: process.env.REDIS_HOST || "localhost",
+        port: parseInt(process.env.REDIS_PORT) || 6379,
+      },
+      ...(process.env.REDIS_PASSWORD && { password: process.env.REDIS_PASSWORD }),
+    };
+
+const client = createClient(clientOptions);
 
 client.on("error", (err) => {
   logger.error(`Redis error: ${err.message}`);
