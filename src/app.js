@@ -8,7 +8,7 @@ const { sequelize } = require("./models/index");
 const app = express();
 
 /*
- * trust proxy = 1: tin 1 hop proxy gần nhất (nginx/load balancer).
+ * trust proxy = 1: tin 1 hop proxy gần nhất (nginx/load balancer/Railway).
  * Cho phép express-rate-limit đọc IP thực từ X-Forwarded-For
  * mà không bị attacker spoof bằng cách tự thêm header.
  * Phải đặt trước tất cả middleware khác.
@@ -16,10 +16,45 @@ const app = express();
 app.set("trust proxy", 1);
 
 app.use(helmet());
-app.use(cors({
-  origin:      process.env.CLIENT_URL || "http://localhost:5173",
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════
+ * CORS CONFIG — Multi-origin
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * Cho phép các origin sau:
+ *   1. CLIENT_URL từ env (production Vercel domain chính)
+ *   2. http://localhost:5173 (Vite dev local)
+ *   3. http://localhost:5000 (test API tools)
+ *   4. *.vercel.app (Vercel preview deploy mỗi PR — match qua regex)
+ *
+ * credentials: true → cho phép gửi cookie/Authorization header.
+ * ═══════════════════════════════════════════════════════════════════════
+ */
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  "http://localhost:5173",
+  "http://localhost:5000",
+].filter(Boolean); // bỏ undefined nếu CLIENT_URL chưa set
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Cho phép request không có origin (Postman, curl, server-to-server)
+    if (!origin) return callback(null, true);
+
+    // Match exact list
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+
+    // Match Vercel preview domain: https://xxx.vercel.app
+    if (/^https:\/\/.*\.vercel\.app$/.test(origin)) return callback(null, true);
+
+    // Còn lại → block
+    return callback(new Error(`CORS blocked: ${origin}`));
+  },
   credentials: true,
-}));
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 const { requestLogger } = require("./middlewares/logger.middleware");
