@@ -3,7 +3,7 @@ const sequelize = require("../config/db");
 const { Review, Order, OrderItem, User, Product } = require("../models/index");
 const AppError  = require("../utils/AppError");
 
-const MAX_PAGE_LIMIT = 50;
+const { MAX_PAGE_LIMIT } = require("../config/constants");
 
 const parseCursor = (cursor) => {
   const ts = parseInt(cursor, 10);

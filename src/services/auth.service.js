@@ -17,70 +17,18 @@ const {
 // CONSTANTS
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Bcrypt cost factor (salt rounds).
- *
- * Benchmark trên CPU server tiêu chuẩn (Intel Xeon 2.4GHz):
- *   - 10: ~60ms/hash   → YẾU cho 2026
- *   - 12: ~250ms/hash  → CHUẨN industry hiện tại ✅
- *   - 14: ~1000ms/hash → CHẬM, dùng cho admin/banking
- *
- * @security OWASP Password Storage Cheat Sheet 2024 khuyến nghị tối thiểu 10,
- *           production nên dùng 12.
- */
-const BCRYPT_SALT_ROUNDS = 12;
-
-const ACCESS_TOKEN_EXPIRES_IN  = "15m";
-const REFRESH_TOKEN_EXPIRES_IN = "7d";
+const {
+  BCRYPT_SALT_ROUNDS,
+  ACCESS_TOKEN_EXPIRES_IN,
+  REFRESH_TOKEN_EXPIRES_IN,
+  VERIFICATION_TOKEN_EXPIRES_MS,
+  PASSWORD_RESET_TOKEN_EXPIRES_MS,
+  MAX_LOGIN_ATTEMPTS,
+  LOCKOUT_DURATION_MS,
+} = require("../config/constants");
 
 /**
- * Verification token expiry — 24 giờ.
- *
- * Tradeoff:
- *   - Quá ngắn (1h): User check mail muộn → phải resend
- *   - Quá dài (7d): Risk security nếu email bị steal
- *   - 24h: Cân bằng giữa UX và security ✅
- */
-const VERIFICATION_TOKEN_EXPIRES_MS = 24 * 60 * 60 * 1000; // 24h
-
-/**
- * Password reset token expiry — 1 GIỜ.
- *
- * Sensitive hơn verify nên expire nhanh hơn:
- *   - Email leak → attacker chỉ có 1h để dùng
- *   - User thường reset ngay khi nhận email
- *   - OWASP recommendation: 15-60 phút cho password reset
- */
-const PASSWORD_RESET_TOKEN_EXPIRES_MS = 60 * 60 * 1000; // 1h
-
-
-/**
- * Account Lockout — số lần login sai password tối đa cho phép (Phần 8).
- *
- * Industry standard:
- *   - GitHub: 10 lần / IP
- *   - Google: ~5 lần / account
- *   - Microsoft: 10 lần / account
- *
- * Decision Q1=A: 5 lần — cân bằng UX (user gõ sai vài lần OK) và security
- *                       (chống brute-force hiệu quả).
- */
-const MAX_LOGIN_ATTEMPTS = 5;
-
-/**
- * Account Lockout — thời gian khoá tài khoản sau khi đạt MAX_LOGIN_ATTEMPTS.
- *
- * Decision Q2=A: Cố định 15 phút (không progressive lockout).
- *   - Đủ lâu để chặn brute-force tự động (15 min × 5 attempts/lock = 1 phút/attempt
- *     → quá chậm cho attacker)
- *   - Đủ ngắn để user thật không quá khó chịu (uống cafe rồi quay lại)
- *   - Đơn giản, dễ giải thích phỏng vấn
- */
-const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 phút
-
-
-/**
- * Google OAuth2 client — dùng để verify ID token từ FE (Phần 6).
+ * Google OAuth2 client — dùng để verify ID token từ FE.
  *
  * @design Khởi tạo 1 lần ở module-level để reuse, không khởi tạo lại mỗi request.
  *         Library tự handle cache Google's public keys (JWKS) để verify chữ ký.

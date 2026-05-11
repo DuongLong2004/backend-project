@@ -1,7 +1,6 @@
 const { createClient } = require("redis");
 const logger = require("../utils/logger");
-
-const REFRESH_TOKEN_TTL = 60 * 60 * 24 * 7; // 7 ngày
+const { REFRESH_TOKEN_TTL_SECONDS: REFRESH_TOKEN_TTL } = require("./constants");
 
 /*
  * ════════════════════════════════════════════════════════════════════════════

@@ -9,20 +9,10 @@ const emailService = require("./email.service");
 // CONSTANTS
 // ════════════════════════════════════════════════════════════════════════════
 
-/**
- * Bcrypt salt rounds — phải MATCH với BCRYPT_SALT_ROUNDS trong auth.service.js
- * để đảm bảo consistency khi user được tạo từ admin route vs register route.
- *
- * @see src/services/auth.service.js
- */
-const BCRYPT_SALT_ROUNDS = 12;
-
-/**
- * Verification token expiry — 24 giờ.
- * @see src/services/auth.service.js
- */
-const VERIFICATION_TOKEN_EXPIRES_MS = 24 * 60 * 60 * 1000;
-
+const {
+  BCRYPT_SALT_ROUNDS,
+  VERIFICATION_TOKEN_EXPIRES_MS,
+} = require("../config/constants");
 // ════════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════════════════
