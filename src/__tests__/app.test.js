@@ -14,7 +14,7 @@ jest.mock("../../src/config/redis", () => ({
     keys:    jest.fn().mockResolvedValue([]),
     del:     jest.fn().mockResolvedValue(true),
   },
-  // Multi-device session API (Phần 5)
+  // Multi-device session API
   createSession:       jest.fn().mockResolvedValue(true),
   getSession:          jest.fn().mockResolvedValue(null),
   touchSession:        jest.fn().mockResolvedValue(true),
@@ -22,10 +22,6 @@ jest.mock("../../src/config/redis", () => ({
   listSessions:        jest.fn().mockResolvedValue([]),
   deleteAllSessions:   jest.fn().mockResolvedValue(true),
   deleteOtherSessions: jest.fn().mockResolvedValue(true),
-  // Legacy API (Phần 1-4 backward compat — vẫn giữ)
-  setRefreshToken:    jest.fn().mockResolvedValue(true),
-  getRefreshToken:    jest.fn().mockResolvedValue(null),
-  deleteRefreshToken: jest.fn().mockResolvedValue(true),
 }));
 
 // Mock email service — không gửi email thật khi test
@@ -117,8 +113,6 @@ const User = require("../../src/models/User");
 const { Order, OrderItem, Product, Review, Wishlist } = require("../../src/models/index");
 const emailService = require("../../src/services/email.service");
 const {
-  deleteRefreshToken,
-  setRefreshToken,
   getSession,
   deleteAllSessions,
 } = require("../../src/config/redis");
@@ -729,7 +723,6 @@ describe("POST /api/auth/reset-password", () => {
     // Verify password được hash, không phải plaintext
     expect(updateMock.mock.calls[0][0].password).not.toBe(NEW_PASSWORD);
 
-    // deleteAllSessions thay cho deleteRefreshToken (logout all devices)
     const { deleteAllSessions } = require("../../src/config/redis");
     expect(deleteAllSessions).toHaveBeenCalledWith(1);
   });
@@ -743,7 +736,6 @@ describe("POST /api/auth/reset-password", () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("không hợp lệ");
-    expect(deleteRefreshToken).not.toHaveBeenCalled();
   });
 
   it("should return 400 if token expired and cleanup token", async () => {
@@ -767,7 +759,6 @@ describe("POST /api/auth/reset-password", () => {
       passwordResetToken:     null,
       passwordResetExpiresAt: null,
     });
-    expect(deleteRefreshToken).not.toHaveBeenCalled();
   });
 
   it("should return 400 if newPassword too short", async () => {
@@ -880,7 +871,6 @@ describe("POST /api/auth/change-password", () => {
 
     // Không update password, không revoke token
     expect(mockUser.update).not.toHaveBeenCalled();
-    expect(deleteRefreshToken).not.toHaveBeenCalled();
   });
 
   it("should return 400 if newPassword === currentPassword", async () => {

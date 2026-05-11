@@ -57,7 +57,7 @@ connectRedis();
 // ════════════════════════════════════════════════════════════════════════════
 
 /*
- * Schema mới (Phần 5):
+ * Session schema (multi-device):
  *   session:{userId}:{deviceId} = JSON {
  *     refreshToken,
  *     deviceName,
@@ -67,13 +67,8 @@ connectRedis();
  *     lastActive
  *   }
  *
- * Schema cũ (Phần 1-4):
- *   refresh:{userId} = string (refreshToken)
- *
- * Migration: Schema cũ vẫn được support qua các function legacy
- *            (setRefreshToken, getRefreshToken, deleteRefreshToken)
- *            để các flow CHƯA migrate (Phần 4 changePassword) vẫn chạy được.
- *            Sau khi auth.service.js migrate xong toàn bộ → có thể xóa legacy.
+ * TTL = 7 ngày, trùng với refreshToken expiry.
+ * Mỗi user có thể có nhiều keys song song (1 key / device đang đăng nhập).
  */
 
 const sessionKey = (userId, deviceId) => `session:${userId}:${deviceId}`;
@@ -200,30 +195,7 @@ const deleteOtherSessions = async (userId, keepDeviceId) => {
   }
 };
 
-// ════════════════════════════════════════════════════════════════════════════
-// LEGACY HELPERS — backward compat với schema cũ
-// ════════════════════════════════════════════════════════════════════════════
 
-/*
- * Các function dưới đây giữ lại để code cũ (chưa migrate sang multi-device)
- * vẫn chạy được, tránh break tests + flows hiện hữu.
- *
- * Sau khi auth.service.js migrate XONG toàn bộ → có thể xóa block này.
- */
-
-const setRefreshToken = async (userId, token) => {
-  await client.setEx(`refresh:${userId}`, REFRESH_TOKEN_TTL, token);
-};
-
-const getRefreshToken = async (userId) => {
-  return client.get(`refresh:${userId}`);
-};
-
-const deleteRefreshToken = async (userId) => {
-  // Xóa CẢ legacy key VÀ tất cả session keys multi-device của user
-  await client.del(`refresh:${userId}`);
-  await deleteAllSessions(userId);
-};
 
 // ════════════════════════════════════════════════════════════════════════════
 // EXPORTS
@@ -232,7 +204,7 @@ const deleteRefreshToken = async (userId) => {
 module.exports = {
   client,
 
-  // Multi-device session API (Phần 5)
+  // Multi-device session API
   createSession,
   getSession,
   touchSession,
@@ -240,9 +212,4 @@ module.exports = {
   listSessions,
   deleteAllSessions,
   deleteOtherSessions,
-
-  // Legacy API (Phần 1-4 backward compat)
-  setRefreshToken,
-  getRefreshToken,
-  deleteRefreshToken,
 };

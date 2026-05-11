@@ -960,7 +960,6 @@ exports.forgotPassword = async ({ email }) => {
  *   2. Attacker đã chiếm session cũ
  *      → Reset password + revoke all sessions = đuổi attacker ra.
  *
- * @note Phần 5 update: thay `deleteRefreshToken(userId)` (legacy single-token)
  *       bằng `deleteAllSessions(userId)` (multi-device). Behavior tương đương:
  *       cả 2 đều xóa toàn bộ refresh tokens của user.
  */
@@ -1074,7 +1073,6 @@ exports.resetPassword = async ({ token, newPassword }) => {
  * @note Phần 5 refactor:
  *   - Decision Q3=A: vẫn behavior "clear all + cấp mới" như Phần 4.
  *   - Implementation: dùng `deleteAllSessions` + `createSession` thay vì
- *     `deleteRefreshToken` + `setRefreshToken` của legacy schema.
  *   - Generate deviceId mới (UUID) cho session sau đổi password — coi như
  *     1 phiên login mới của device hiện tại.
  */
