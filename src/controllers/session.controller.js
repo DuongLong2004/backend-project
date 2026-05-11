@@ -1,5 +1,5 @@
-const sessionService   = require("../services/session.service");
-const catchAsync       = require("../utils/catchAsync");
+const sessionService = require("../services/session.service");
+const catchAsync = require("../utils/catchAsync");
 const { sendResponse } = require("../utils/response");
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -16,7 +16,7 @@ const { sendResponse } = require("../utils/response");
  */
 exports.listSessions = catchAsync(async (req, res) => {
   const data = await sessionService.listSessions({
-    userId:          req.user.id,
+    userId: req.user.id,
     currentDeviceId: req.user.deviceId,
   });
   return sendResponse(res, 200, "success", "OK", data);
@@ -32,8 +32,8 @@ exports.listSessions = catchAsync(async (req, res) => {
  */
 exports.revokeSession = catchAsync(async (req, res) => {
   await sessionService.revokeSession({
-    userId:          req.user.id,
-    targetDeviceId:  req.params.deviceId,
+    userId: req.user.id,
+    targetDeviceId: req.params.deviceId,
     currentDeviceId: req.user.deviceId,
   });
   return sendResponse(res, 200, "success", "Đã đăng xuất thiết bị thành công");
@@ -48,7 +48,7 @@ exports.revokeSession = catchAsync(async (req, res) => {
  */
 exports.revokeOtherSessions = catchAsync(async (req, res) => {
   await sessionService.revokeOtherSessions({
-    userId:          req.user.id,
+    userId: req.user.id,
     currentDeviceId: req.user.deviceId,
   });
   return sendResponse(res, 200, "success", "Đã đăng xuất khỏi tất cả thiết bị khác");

@@ -1,6 +1,6 @@
 const nodemailer = require("nodemailer");
 const { Resend } = require("resend");
-const logger     = require("../utils/logger");
+const logger = require("../utils/logger");
 
 // ════════════════════════════════════════════════════════════════════════════
 // EMAIL CONFIGURATION — Dual-mode
@@ -21,11 +21,11 @@ const logger     = require("../utils/logger");
 const isProduction = process.env.NODE_ENV === "production";
 
 // Sender info — dùng chung cho cả 2 mode
-const FROM_NAME    = process.env.EMAIL_FROM_NAME || "Backend Project";
+const FROM_NAME = process.env.EMAIL_FROM_NAME || "Backend Project";
 const FROM_ADDRESS = isProduction
-  // Production: nếu có domain verified → dùng. Không thì fallback "onboarding@resend.dev"
-  // (test mode, chỉ gửi được tới chính email account Resend).
-  ? (process.env.RESEND_FROM_ADDRESS || "onboarding@resend.dev")
+  ? // Production: nếu có domain verified → dùng. Không thì fallback "onboarding@resend.dev"
+    // (test mode, chỉ gửi được tới chính email account Resend).
+    process.env.RESEND_FROM_ADDRESS || "onboarding@resend.dev"
   : process.env.EMAIL_USER;
 
 // ════════════════════════════════════════════════════════════════════════════

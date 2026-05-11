@@ -1,5 +1,5 @@
-const authService      = require("../services/auth.service");
-const catchAsync       = require("../utils/catchAsync");
+const authService = require("../services/auth.service");
+const catchAsync = require("../utils/catchAsync");
 const { sendResponse } = require("../utils/response");
 
 const FRONTEND_URL = process.env.CLIENT_URL || "http://localhost:5173";
@@ -21,9 +21,9 @@ exports.register = catchAsync(async (req, res) => {
 
 exports.login = catchAsync(async (req, res) => {
   const data = await authService.login({
-    email:     req.body.email,
-    password:  req.body.password,
-    ip:        req.ip,
+    email: req.body.email,
+    password: req.body.password,
+    ip: req.ip,
     userAgent: req.headers["user-agent"],
   });
   return sendResponse(res, 200, "success", "Login successfully", data);
@@ -49,8 +49,7 @@ exports.logout = catchAsync(async (req, res) => {
 
 exports.verifyEmail = catchAsync(async (req, res) => {
   const { token } = req.query;
-  const wantsJson = req.query.format === "json" ||
-                    req.headers.accept?.includes("application/json");
+  const wantsJson = req.query.format === "json" || req.headers.accept?.includes("application/json");
 
   try {
     const data = await authService.verifyEmail({ token });
@@ -66,7 +65,7 @@ exports.verifyEmail = catchAsync(async (req, res) => {
     }
 
     let reason = "invalid_token";
-    if (err.message?.includes("required"))     reason = "missing_token";
+    if (err.message?.includes("required")) reason = "missing_token";
     else if (err.message?.includes("hết hạn")) reason = "expired_token";
 
     return res.redirect(302, `${FRONTEND_URL}/verify-email-error?reason=${reason}`);
@@ -103,7 +102,7 @@ exports.forgotPassword = catchAsync(async (req, res) => {
 
 exports.resetPassword = catchAsync(async (req, res) => {
   const data = await authService.resetPassword({
-    token:       req.body.token,
+    token: req.body.token,
     newPassword: req.body.newPassword,
   });
   return sendResponse(res, 200, "success", data.message, {
@@ -130,22 +129,21 @@ exports.resetPassword = catchAsync(async (req, res) => {
  */
 exports.changePassword = catchAsync(async (req, res) => {
   const data = await authService.changePassword({
-    userId:          req.user.id,
+    userId: req.user.id,
     currentPassword: req.body.currentPassword,
-    newPassword:     req.body.newPassword,
-    ip:              req.ip,
-    userAgent:       req.headers["user-agent"],
+    newPassword: req.body.newPassword,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
   });
   return sendResponse(res, 200, "success", data.message, {
-    accessToken:  data.accessToken,
+    accessToken: data.accessToken,
     refreshToken: data.refreshToken,
-    user:         data.user,
+    user: data.user,
   });
 });
 
-
 // ════════════════════════════════════════════════════════════════════════════
-// GOOGLE OAUTH 
+// GOOGLE OAUTH
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -167,8 +165,8 @@ exports.changePassword = catchAsync(async (req, res) => {
 exports.googleLogin = catchAsync(async (req, res) => {
   const data = await authService.loginWithGoogle({
     credential: req.body.credential,
-    ip:         req.ip,
-    userAgent:  req.headers["user-agent"],
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
   });
   return sendResponse(
     res,
@@ -176,10 +174,10 @@ exports.googleLogin = catchAsync(async (req, res) => {
     "success",
     data.isNewUser ? "Đăng ký Google thành công!" : "Đăng nhập Google thành công!",
     {
-      accessToken:  data.accessToken,
+      accessToken: data.accessToken,
       refreshToken: data.refreshToken,
-      isNewUser:    data.isNewUser,
-      user:         data.user,
+      isNewUser: data.isNewUser,
+      user: data.user,
     }
   );
 });

@@ -1,5 +1,5 @@
 const { sendEmail } = require("../config/email");
-const logger        = require("../utils/logger");
+const logger = require("../utils/logger");
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -350,11 +350,11 @@ exports.sendAccountLockedEmail = async ({
   // Format unlock time theo timezone Việt Nam
   const unlockTimeStr = unlockTime.toLocaleString("vi-VN", {
     timeZone: "Asia/Ho_Chi_Minh",
-    hour:     "2-digit",
-    minute:   "2-digit",
-    day:      "2-digit",
-    month:    "2-digit",
-    year:     "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
   });
 
   try {

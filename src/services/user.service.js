@@ -1,18 +1,15 @@
-const bcrypt   = require("bcrypt");
-const crypto   = require("crypto");
-const User     = require("../models/User");
+const bcrypt = require("bcrypt");
+const crypto = require("crypto");
+const User = require("../models/User");
 const AppError = require("../utils/AppError");
-const logger   = require("../utils/logger");
+const logger = require("../utils/logger");
 const emailService = require("./email.service");
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
 // ════════════════════════════════════════════════════════════════════════════
 
-const {
-  BCRYPT_SALT_ROUNDS,
-  VERIFICATION_TOKEN_EXPIRES_MS,
-} = require("../config/constants");
+const { BCRYPT_SALT_ROUNDS, VERIFICATION_TOKEN_EXPIRES_MS } = require("../config/constants");
 // ════════════════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════════════════
@@ -55,7 +52,7 @@ exports.createUser = async ({ name, email, password, age }) => {
   const hashed = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
   // Generate verification token + expiry
-  const verificationToken          = generateVerificationToken();
+  const verificationToken = generateVerificationToken();
   const verificationTokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_EXPIRES_MS);
 
   const user = await User.create({
@@ -78,22 +75,22 @@ exports.createUser = async ({ name, email, password, age }) => {
    */
   try {
     await emailService.sendVerificationEmail({
-      to:       email,
+      to: email,
       userName: name,
-      token:    verificationToken,
+      token: verificationToken,
     });
   } catch (err) {
     logger.warn(
       `EMAIL WARNING: Failed to send verification email to ${email}. ` +
-      `User can use "Resend verification" endpoint. Error: ${err.message}`
+        `User can use "Resend verification" endpoint. Error: ${err.message}`
     );
   }
 
   return {
-    id:         user.id,
-    name:       user.name,
-    email:      user.email,
-    age:        user.age,
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    age: user.age,
     isVerified: user.isVerified,
   };
 };
@@ -153,14 +150,17 @@ exports.updateUser = async (id, body, requester) => {
     throw new AppError("User not found", 404);
   }
 
-  const { role, password, ...allowedData } = body;
+  // Strip role + password — destructure to discard, không update qua endpoint này.
+  // `_role`, `_password` prefix + disable rule cho intentional unused destructure.
+  // eslint-disable-next-line no-unused-vars
+  const { role: _role, password: _password, ...allowedData } = body;
   await user.update(allowedData);
 
   return {
-    id:    user.id,
-    name:  user.name,
+    id: user.id,
+    name: user.name,
     email: user.email,
-    age:   user.age,
+    age: user.age,
   };
 };
 
@@ -201,8 +201,8 @@ exports.changeUserRole = async (targetId, role, requesterId) => {
   await user.save();
 
   return {
-    id:    user.id,
+    id: user.id,
     email: user.email,
-    role:  user.role,
+    role: user.role,
   };
 };

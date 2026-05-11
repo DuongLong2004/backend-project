@@ -1,9 +1,9 @@
-const express    = require("express");
-const router     = express.Router();
+const express = require("express");
+const router = express.Router();
 const productController = require("../controllers/product.controller");
-const { verifyToken }   = require("../middlewares/auth.middleware");
-const checkRole         = require("../middlewares/checkRole");
-const { cache }         = require("../middlewares/cache.middleware");
+const { verifyToken } = require("../middlewares/auth.middleware");
+const checkRole = require("../middlewares/checkRole");
+const { cache } = require("../middlewares/cache.middleware");
 
 /**
  * @swagger
@@ -48,11 +48,7 @@ const { cache }         = require("../middlewares/cache.middleware");
  *       200:
  *         description: Danh sách sản phẩm kèm meta pagination
  */
-router.get(
-  "/",
-  cache(),
-  productController.getProducts
-);
+router.get("/", cache(), productController.getProducts);
 
 /**
  * @swagger
@@ -71,11 +67,7 @@ router.get(
  *       404:
  *         description: Sản phẩm không tồn tại
  */
-router.get(
-  "/:id",
-  cache(60 * 10),
-  productController.getProductById
-);
+router.get("/:id", cache(60 * 10), productController.getProductById);
 
 /**
  * @swagger
@@ -109,12 +101,7 @@ router.get(
  *       403:
  *         description: Không có quyền admin
  */
-router.post(
-  "/",
-  verifyToken,
-  checkRole("admin"),
-  productController.createProduct
-);
+router.post("/", verifyToken, checkRole("admin"), productController.createProduct);
 
 /**
  * @swagger
@@ -146,12 +133,7 @@ router.post(
  *       404:
  *         description: Sản phẩm không tồn tại
  */
-router.put(
-  "/:id",
-  verifyToken,
-  checkRole("admin"),
-  productController.updateProduct
-);
+router.put("/:id", verifyToken, checkRole("admin"), productController.updateProduct);
 
 /**
  * @swagger
@@ -172,11 +154,6 @@ router.put(
  *       404:
  *         description: Sản phẩm không tồn tại
  */
-router.delete(
-  "/:id",
-  verifyToken,
-  checkRole("admin"),
-  productController.deleteProduct
-);
+router.delete("/:id", verifyToken, checkRole("admin"), productController.deleteProduct);
 
 module.exports = router;

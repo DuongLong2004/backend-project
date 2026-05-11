@@ -1,9 +1,9 @@
-const express    = require("express");
-const router     = express.Router();
-const rateLimit  = require("express-rate-limit");
+const express = require("express");
+const router = express.Router();
+const rateLimit = require("express-rate-limit");
 const authController = require("../controllers/auth.controller");
 const sessionController = require("../controllers/session.controller");
-const validate       = require("../middlewares/validate.middleware");
+const validate = require("../middlewares/validate.middleware");
 const { verifyToken } = require("../middlewares/auth.middleware");
 const {
   registerSchema,
@@ -25,11 +25,11 @@ const loginLimiter = isTest
   ? noopLimiter
   : rateLimit({
       windowMs: 15 * 60 * 1000,
-      max:      5,
-      message:  {
-        status:  "error",
+      max: 5,
+      message: {
+        status: "error",
         message: "Too many login attempts, please try again after 15 minutes",
-        data:    null,
+        data: null,
       },
     });
 
@@ -37,11 +37,11 @@ const resendVerificationLimiter = isTest
   ? noopLimiter
   : rateLimit({
       windowMs: 15 * 60 * 1000,
-      max:      3,
-      message:  {
-        status:  "error",
+      max: 3,
+      message: {
+        status: "error",
         message: "Bạn đã yêu cầu gửi lại email quá nhiều lần. Vui lòng thử lại sau 15 phút.",
-        data:    null,
+        data: null,
       },
     });
 
@@ -49,11 +49,11 @@ const forgotPasswordLimiter = isTest
   ? noopLimiter
   : rateLimit({
       windowMs: 15 * 60 * 1000,
-      max:      3,
-      message:  {
-        status:  "error",
+      max: 3,
+      message: {
+        status: "error",
         message: "Bạn đã yêu cầu đặt lại mật khẩu quá nhiều lần. Vui lòng thử lại sau 15 phút.",
-        data:    null,
+        data: null,
       },
     });
 
@@ -61,11 +61,11 @@ const resetPasswordLimiter = isTest
   ? noopLimiter
   : rateLimit({
       windowMs: 15 * 60 * 1000,
-      max:      5,
-      message:  {
-        status:  "error",
+      max: 5,
+      message: {
+        status: "error",
         message: "Quá nhiều lần thử. Vui lòng thử lại sau 15 phút.",
-        data:    null,
+        data: null,
       },
     });
 
@@ -81,11 +81,11 @@ const changePasswordLimiter = isTest
   ? noopLimiter
   : rateLimit({
       windowMs: 15 * 60 * 1000,
-      max:      10,
-      message:  {
-        status:  "error",
+      max: 10,
+      message: {
+        status: "error",
         message: "Quá nhiều lần thử đổi mật khẩu. Vui lòng thử lại sau 15 phút.",
-        data:    null,
+        data: null,
       },
     });
 
@@ -170,7 +170,6 @@ router.post(
   authController.changePassword
 );
 
-
 // ════════════════════════════════════════════════════════════════════════════
 // SESSION MANAGEMENT (Phần 5 — Multi-device)
 // ════════════════════════════════════════════════════════════════════════════
@@ -234,11 +233,11 @@ const googleLoginLimiter = isTest
   ? noopLimiter
   : rateLimit({
       windowMs: 15 * 60 * 1000,
-      max:      10,
-      message:  {
-        status:  "error",
+      max: 10,
+      message: {
+        status: "error",
         message: "Quá nhiều lần thử đăng nhập Google. Vui lòng thử lại sau 15 phút.",
-        data:    null,
+        data: null,
       },
     });
 

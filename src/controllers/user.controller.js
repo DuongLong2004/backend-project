@@ -1,5 +1,5 @@
-const userService      = require("../services/user.service");
-const catchAsync       = require("../utils/catchAsync");
+const userService = require("../services/user.service");
+const catchAsync = require("../utils/catchAsync");
 const { sendResponse } = require("../utils/response");
 
 // POST /api/users
@@ -36,10 +36,6 @@ exports.deleteUser = catchAsync(async (req, res) => {
 
 // PATCH /api/users/:id/role  (admin)
 exports.changeUserRole = catchAsync(async (req, res) => {
-  const data = await userService.changeUserRole(
-    req.params.id,
-    req.body.role,
-    req.user.id
-  );
+  const data = await userService.changeUserRole(req.params.id, req.body.role, req.user.id);
   return sendResponse(res, 200, "success", "Change role successfully", data);
 });

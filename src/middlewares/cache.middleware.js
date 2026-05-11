@@ -49,7 +49,7 @@ const clearCache = async (urlPrefix) => {
 
   try {
     const pattern = `cache:${urlPrefix}*`;
-    const keys    = await scanKeys(pattern);
+    const keys = await scanKeys(pattern);
 
     if (keys.length > 0) {
       await redis.del(keys);

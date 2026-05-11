@@ -1,17 +1,16 @@
-const multer  = require("multer");
-const path    = require("path");
-const fs      = require("fs");
-const crypto  = require("crypto");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 
 const ALLOWED_MIME_TO_EXT = {
   "image/jpeg": ".jpg",
-  "image/png":  ".png",
+  "image/png": ".png",
 };
 
 const UPLOAD_DIR = path.resolve("src/uploads");
 
-const generateFilename = (ext) =>
-  `${Date.now()}-${crypto.randomBytes(16).toString("hex")}${ext}`;
+const generateFilename = (ext) => `${Date.now()}-${crypto.randomBytes(16).toString("hex")}${ext}`;
 
 /*
  * Dùng memoryStorage thay vì diskStorage để có thể đọc magic bytes
@@ -49,13 +48,13 @@ const verifyAndSaveFile = async (req, res, next) => {
 
     if (!detected || !ALLOWED_MIME_TO_EXT[detected.mime]) {
       return res.status(400).json({
-        status:  "error",
+        status: "error",
         message: "Only jpg, jpeg, png files are allowed",
-        data:    null,
+        data: null,
       });
     }
 
-    const ext      = ALLOWED_MIME_TO_EXT[detected.mime];
+    const ext = ALLOWED_MIME_TO_EXT[detected.mime];
     const filename = generateFilename(ext);
     const filepath = path.join(UPLOAD_DIR, filename);
 
@@ -63,7 +62,7 @@ const verifyAndSaveFile = async (req, res, next) => {
 
     // Ghi đè lại các field để controller dùng giống như diskStorage
     req.file.filename = filename;
-    req.file.path     = filepath;
+    req.file.path = filepath;
     req.file.mimetype = detected.mime;
 
     next();

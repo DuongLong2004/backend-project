@@ -1,17 +1,14 @@
-const User        = require("./User");
-const Product     = require("./Product");
-const Order       = require("./Order");
-const OrderItem   = require("./OrderItem");
-const Review      = require("./Review");
-const Wishlist    = require("./Wishlist");
-const ProductSpec = require("./ProductSpec"); 
+const User = require("./User");
+const Product = require("./Product");
+const Order = require("./Order");
+const OrderItem = require("./OrderItem");
+const Review = require("./Review");
+const Wishlist = require("./Wishlist");
+const ProductSpec = require("./ProductSpec");
 
 const sequelize = require("../config/db");
 
-
 const ProductPlacement = require("./Placement");
-
-
 
 // User – Order
 User.hasMany(Order, { foreignKey: "userId" });
@@ -41,13 +38,19 @@ Wishlist.belongsTo(Product, { foreignKey: "productId" });
 Product.hasMany(ProductSpec, { foreignKey: "productId", as: "specs" });
 ProductSpec.belongsTo(Product, { foreignKey: "productId" });
 
-
 // Thêm association
 Product.hasMany(ProductPlacement, { foreignKey: "productId", as: "placements" });
 ProductPlacement.belongsTo(Product, { foreignKey: "productId", as: "product" });
 
 // ✅ 1 dòng export duy nhất
 module.exports = {
-  User, Product, Order, OrderItem,
-  Review, Wishlist, ProductSpec, ProductPlacement, sequelize
+  User,
+  Product,
+  Order,
+  OrderItem,
+  Review,
+  Wishlist,
+  ProductSpec,
+  ProductPlacement,
+  sequelize,
 };

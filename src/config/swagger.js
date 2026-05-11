@@ -23,9 +23,7 @@ const buildServers = () => {
   }
 
   // Development: list local + prod (nếu có)
-  const servers = [
-    { url: baseUrl || "http://localhost:5000", description: "Local server" },
-  ];
+  const servers = [{ url: baseUrl || "http://localhost:5000", description: "Local server" }];
 
   // Nếu dev có set BASE_URL khác localhost (VD test với Railway từ local) → thêm fallback
   if (baseUrl && baseUrl !== "http://localhost:5000") {

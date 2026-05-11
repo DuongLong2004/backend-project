@@ -1,42 +1,43 @@
-
-
-
 const { DataTypes } = require("sequelize");
 const sequelize = require("../config/db");
 
-const OrderItem = sequelize.define("OrderItem", {
-  id: {
-    type: DataTypes.INTEGER,
-    autoIncrement: true,
-    primaryKey: true,
+const OrderItem = sequelize.define(
+  "OrderItem",
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      autoIncrement: true,
+      primaryKey: true,
+    },
+    orderId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    productId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+
+    placementId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: null,
+    },
+    quantity: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      validate: { min: { args: [1], msg: "Quantity must be >= 1" } },
+    },
+    price: {
+      type: DataTypes.DECIMAL(15, 0),
+      allowNull: false,
+      validate: { min: { args: [0], msg: "Price must be >= 0" } },
+    },
   },
-  orderId: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-  },
-  productId: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-  },
-  
-  placementId: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-    defaultValue: null,
-  },
-  quantity: {
-    type: DataTypes.INTEGER,
-    allowNull: false,
-    validate: { min: { args: [1], msg: "Quantity must be >= 1" } },
-  },
-  price: {
-    type: DataTypes.DECIMAL(15, 0),
-    allowNull: false,
-    validate: { min: { args: [0], msg: "Price must be >= 0" } },
-  },
-}, {
-  tableName: "order_items",
-  timestamps: false,
-});
+  {
+    tableName: "order_items",
+    timestamps: false,
+  }
+);
 
 module.exports = OrderItem;

@@ -1,5 +1,5 @@
 const AppError = require("../utils/AppError");
-const logger   = require("../utils/logger");
+const logger = require("../utils/logger");
 const {
   listSessions: redisListSessions,
   deleteSession,
@@ -25,12 +25,12 @@ exports.listSessions = async ({ userId, currentDeviceId }) => {
   const sessions = await redisListSessions(userId);
 
   return sessions.map((s) => ({
-    deviceId:   s.deviceId,
+    deviceId: s.deviceId,
     deviceName: s.deviceName,
-    ip:         s.ip,
-    createdAt:  s.createdAt,
+    ip: s.ip,
+    createdAt: s.createdAt,
     lastActive: s.lastActive,
-    isCurrent:  s.deviceId === currentDeviceId,
+    isCurrent: s.deviceId === currentDeviceId,
   }));
 };
 
@@ -67,7 +67,5 @@ exports.revokeOtherSessions = async ({ userId, currentDeviceId }) => {
   }
 
   await deleteOtherSessions(userId, currentDeviceId);
-  logger.info(
-    `OTHER SESSIONS REVOKED: userId=${userId} currentDeviceId=${currentDeviceId}`
-  );
+  logger.info(`OTHER SESSIONS REVOKED: userId=${userId} currentDeviceId=${currentDeviceId}`);
 };

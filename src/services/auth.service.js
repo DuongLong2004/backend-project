@@ -1,17 +1,12 @@
-const bcrypt   = require("bcrypt");
-const crypto   = require("crypto");
-const jwt      = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
+const crypto = require("crypto");
+const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
-const User     = require("../models/User");
+const User = require("../models/User");
 const AppError = require("../utils/AppError");
-const logger   = require("../utils/logger");
+const logger = require("../utils/logger");
 const emailService = require("./email.service");
-const {
-  createSession,
-  getSession,
-  deleteSession,
-  deleteAllSessions,
-} = require("../config/redis");
+const { createSession, getSession, deleteSession, deleteAllSessions } = require("../config/redis");
 
 // ════════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -55,11 +50,9 @@ const GOOGLE_OAUTH_CLIENT = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
  *       Khi refresh, nếu decoded.deviceId === undefined → reject để force re-login.
  */
 const generateAccessToken = (user, deviceId) =>
-  jwt.sign(
-    { id: user.id, email: user.email, role: user.role, deviceId },
-    process.env.JWT_SECRET,
-    { expiresIn: ACCESS_TOKEN_EXPIRES_IN }
-  );
+  jwt.sign({ id: user.id, email: user.email, role: user.role, deviceId }, process.env.JWT_SECRET, {
+    expiresIn: ACCESS_TOKEN_EXPIRES_IN,
+  });
 
 /**
  * Generate JWT refresh token.
@@ -72,11 +65,9 @@ const generateAccessToken = (user, deviceId) =>
  * @param {string} deviceId  - UUID của device (Phần 5)
  */
 const generateRefreshToken = (user, deviceId) =>
-  jwt.sign(
-    { id: user.id, deviceId },
-    process.env.JWT_REFRESH_SECRET,
-    { expiresIn: REFRESH_TOKEN_EXPIRES_IN }
-  );
+  jwt.sign({ id: user.id, deviceId }, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: REFRESH_TOKEN_EXPIRES_IN,
+  });
 
 /**
  * Generate token an toàn cho email verify / password reset.
@@ -92,7 +83,6 @@ const generateRefreshToken = (user, deviceId) =>
  *         - Dễ debug bằng mắt
  */
 const generateSecureToken = () => crypto.randomBytes(32).toString("hex");
-
 
 /**
  * Check tài khoản có đang bị khoá hay không (Phần 8).
@@ -125,19 +115,19 @@ const parseDeviceName = (userAgent = "") => {
   const ua = userAgent.toLowerCase();
 
   let browser = "Unknown Browser";
-  if (ua.includes("edg/"))           browser = "Edge";
-  else if (ua.includes("chrome/"))   browser = "Chrome";
-  else if (ua.includes("firefox/"))  browser = "Firefox";
-  else if (ua.includes("safari/"))   browser = "Safari";
+  if (ua.includes("edg/")) browser = "Edge";
+  else if (ua.includes("chrome/")) browser = "Chrome";
+  else if (ua.includes("firefox/")) browser = "Firefox";
+  else if (ua.includes("safari/")) browser = "Safari";
   else if (ua.includes("opera") || ua.includes("opr/")) browser = "Opera";
-  else if (ua.includes("postman"))   browser = "Postman";
+  else if (ua.includes("postman")) browser = "Postman";
 
   let os = "Unknown OS";
-  if (ua.includes("windows"))   os = "Windows";
-  else if (ua.includes("mac"))  os = "macOS";
+  if (ua.includes("windows")) os = "Windows";
+  else if (ua.includes("mac")) os = "macOS";
   else if (ua.includes("iphone") || ua.includes("ipad")) os = "iOS";
-  else if (ua.includes("android"))  os = "Android";
-  else if (ua.includes("linux"))    os = "Linux";
+  else if (ua.includes("android")) os = "Android";
+  else if (ua.includes("linux")) os = "Linux";
 
   return `${browser} on ${os}`;
 };
@@ -173,7 +163,7 @@ exports.register = async ({ name, email, password }) => {
 
   const hashed = await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
 
-  const verificationToken          = generateSecureToken();
+  const verificationToken = generateSecureToken();
   const verificationTokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_EXPIRES_MS);
 
   const user = await User.create({
@@ -194,22 +184,22 @@ exports.register = async ({ name, email, password }) => {
    */
   try {
     await emailService.sendVerificationEmail({
-      to:        email,
-      userName:  name,
-      token:     verificationToken,
+      to: email,
+      userName: name,
+      token: verificationToken,
     });
   } catch (err) {
     logger.warn(
       `EMAIL WARNING: Failed to send verification email to ${email}. ` +
-      `User can use "Resend verification" endpoint. Error: ${err.message}`
+        `User can use "Resend verification" endpoint. Error: ${err.message}`
     );
   }
 
   return {
-    id:         user.id,
-    name:       user.name,
-    email:      user.email,
-    role:       user.role,
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
     isVerified: user.isVerified,
   };
 };
@@ -286,9 +276,7 @@ exports.login = async ({ email, password, ip, userAgent }) => {
    * user thường (có thể bị lock).
    */
   if (isAccountLocked(user)) {
-    const minutesRemaining = Math.ceil(
-      (new Date(user.lockedUntil) - new Date()) / 60000
-    );
+    const minutesRemaining = Math.ceil((new Date(user.lockedUntil) - new Date()) / 60000);
     logger.warn(
       `AUTH FAIL: Account locked email=${email} ip=${ip} minutesRemaining=${minutesRemaining}`
     );
@@ -303,7 +291,7 @@ exports.login = async ({ email, password, ip, userAgent }) => {
       423
     );
     // Attach metadata cho FE hiển thị countdown chính xác
-    error.lockedUntil      = user.lockedUntil;
+    error.lockedUntil = user.lockedUntil;
     error.minutesRemaining = minutesRemaining;
     throw error;
   }
@@ -317,10 +305,7 @@ exports.login = async ({ email, password, ip, userAgent }) => {
    */
   if (!user.password) {
     logger.warn(`AUTH FAIL: Google-only user trying password login email=${email}`);
-    throw new AppError(
-      "Tài khoản này được tạo bằng Google. Vui lòng đăng nhập với Google.",
-      401
-    );
+    throw new AppError("Tài khoản này được tạo bằng Google. Vui lòng đăng nhập với Google.", 401);
   }
 
   const isMatch = await bcrypt.compare(password, user.password);
@@ -333,11 +318,11 @@ exports.login = async ({ email, password, ip, userAgent }) => {
     const updates = { failedLoginAttempts: newAttempts };
 
     let shouldSendLockEmail = false;
-    let lockUntil           = null;
+    let lockUntil = null;
 
     if (newAttempts >= MAX_LOGIN_ATTEMPTS) {
       // Đạt threshold → lock account
-      lockUntil          = new Date(Date.now() + LOCKOUT_DURATION_MS);
+      lockUntil = new Date(Date.now() + LOCKOUT_DURATION_MS);
       updates.lockedUntil = lockUntil;
       shouldSendLockEmail = true;
 
@@ -359,16 +344,16 @@ exports.login = async ({ email, password, ip, userAgent }) => {
     if (shouldSendLockEmail) {
       try {
         await emailService.sendAccountLockedEmail({
-          to:             user.email,
-          userName:       user.name,
-          unlockTime:     lockUntil,
-          maxAttempts:    MAX_LOGIN_ATTEMPTS,
+          to: user.email,
+          userName: user.name,
+          unlockTime: lockUntil,
+          maxAttempts: MAX_LOGIN_ATTEMPTS,
           lockoutMinutes: Math.floor(LOCKOUT_DURATION_MS / 60000),
         });
       } catch (err) {
         logger.warn(
           `EMAIL WARNING: Failed to send lock notification to ${email}. ` +
-          `Account is still locked. Error: ${err.message}`
+            `Account is still locked. Error: ${err.message}`
         );
       }
 
@@ -377,7 +362,7 @@ exports.login = async ({ email, password, ip, userAgent }) => {
         `Bạn đã nhập sai mật khẩu ${MAX_LOGIN_ATTEMPTS} lần. Tài khoản tạm khoá ${Math.floor(LOCKOUT_DURATION_MS / 60000)} phút. Email cảnh báo đã được gửi đến ${user.email}.`,
         423
       );
-      error.lockedUntil      = lockUntil;
+      error.lockedUntil = lockUntil;
       error.minutesRemaining = Math.floor(LOCKOUT_DURATION_MS / 60000);
       throw error;
     }
@@ -401,7 +386,7 @@ exports.login = async ({ email, password, ip, userAgent }) => {
   if (user.failedLoginAttempts > 0 || user.lockedUntil) {
     await user.update({
       failedLoginAttempts: 0,
-      lockedUntil:         null,
+      lockedUntil: null,
     });
     logger.info(`AUTH RESET: Reset failed attempts for email=${email}`);
   }
@@ -415,9 +400,9 @@ exports.login = async ({ email, password, ip, userAgent }) => {
   }
 
   // Phần 5: Generate deviceId mới + tạo session multi-device
-  const deviceId    = crypto.randomUUID();
-  const deviceName  = parseDeviceName(userAgent);
-  const accessToken  = generateAccessToken(user, deviceId);
+  const deviceId = crypto.randomUUID();
+  const deviceName = parseDeviceName(userAgent);
+  const accessToken = generateAccessToken(user, deviceId);
   const refreshToken = generateRefreshToken(user, deviceId);
 
   await createSession({
@@ -426,21 +411,19 @@ exports.login = async ({ email, password, ip, userAgent }) => {
     refreshToken,
     deviceName,
     userAgent: userAgent || "Unknown",
-    ip:        ip || "Unknown",
+    ip: ip || "Unknown",
   });
 
-  logger.info(
-    `LOGIN SUCCESS: email=${email} ip=${ip} device="${deviceName}" deviceId=${deviceId}`
-  );
+  logger.info(`LOGIN SUCCESS: email=${email} ip=${ip} device="${deviceName}" deviceId=${deviceId}`);
 
   return {
     accessToken,
     refreshToken,
     user: {
-      id:         user.id,
-      name:       user.name,
-      email:      user.email,
-      role:       user.role,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
       isVerified: user.isVerified,
       hasPassword: !!user.password, // FE dùng để biết Google-only user
     },
@@ -517,7 +500,7 @@ exports.refresh = async ({ refreshToken }) => {
   }
 
   // Cấp tokens MỚI cho cùng deviceId (giữ nguyên session, chỉ rotate token)
-  const newAccessToken  = generateAccessToken(user, deviceId);
+  const newAccessToken = generateAccessToken(user, deviceId);
   const newRefreshToken = generateRefreshToken(user, deviceId);
 
   // Update session: ghi đè refreshToken mới, giữ nguyên metadata
@@ -525,13 +508,13 @@ exports.refresh = async ({ refreshToken }) => {
     userId,
     deviceId,
     refreshToken: newRefreshToken,
-    deviceName:   session.deviceName,
-    userAgent:    session.userAgent,
-    ip:           session.ip,
+    deviceName: session.deviceName,
+    userAgent: session.userAgent,
+    ip: session.ip,
   });
 
   return {
-    accessToken:  newAccessToken,
+    accessToken: newAccessToken,
     refreshToken: newRefreshToken,
   };
 };
@@ -631,7 +614,7 @@ exports.loginWithGoogle = async ({ credential, ip, userAgent }) => {
   let payload;
   try {
     const ticket = await GOOGLE_OAUTH_CLIENT.verifyIdToken({
-      idToken:  credential,
+      idToken: credential,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
     payload = ticket.getPayload();
@@ -641,7 +624,7 @@ exports.loginWithGoogle = async ({ credential, ip, userAgent }) => {
   }
 
   const {
-    sub:            googleId,        // Google's unique user ID
+    sub: googleId, // Google's unique user ID
     email,
     email_verified: emailVerified,
     name,
@@ -694,25 +677,23 @@ exports.loginWithGoogle = async ({ credential, ip, userAgent }) => {
        * - avatar = picture từ Google
        */
       user = await User.create({
-        name:       name || email.split("@")[0],
+        name: name || email.split("@")[0],
         email,
-        password:   null,
+        password: null,
         googleId,
-        role:       "user",
+        role: "user",
         isVerified: true,
-        avatar:     picture || null,
+        avatar: picture || null,
       });
       isNewUser = true;
-      logger.info(
-        `GOOGLE AUTH NEW USER: email=${email} userId=${user.id}`
-      );
+      logger.info(`GOOGLE AUTH NEW USER: email=${email} userId=${user.id}`);
     }
   }
 
   // Bước 6: Generate tokens + create session (giống login thường)
-  const deviceId     = crypto.randomUUID();
-  const deviceName   = parseDeviceName(userAgent);
-  const accessToken  = generateAccessToken(user, deviceId);
+  const deviceId = crypto.randomUUID();
+  const deviceName = parseDeviceName(userAgent);
+  const accessToken = generateAccessToken(user, deviceId);
   const refreshToken = generateRefreshToken(user, deviceId);
 
   await createSession({
@@ -721,7 +702,7 @@ exports.loginWithGoogle = async ({ credential, ip, userAgent }) => {
     refreshToken,
     deviceName,
     userAgent: userAgent || "Unknown",
-    ip:        ip || "Unknown",
+    ip: ip || "Unknown",
   });
 
   logger.info(
@@ -733,12 +714,12 @@ exports.loginWithGoogle = async ({ credential, ip, userAgent }) => {
     refreshToken,
     isNewUser,
     user: {
-      id:         user.id,
-      name:       user.name,
-      email:      user.email,
-      role:       user.role,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
       isVerified: user.isVerified,
-      avatar:     user.avatar,
+      avatar: user.avatar,
       hasPassword: !!user.password, // FE dùng để biết Google-only user
     },
   };
@@ -761,20 +742,17 @@ exports.verifyEmail = async ({ token }) => {
     throw new AppError("Token không hợp lệ hoặc đã được sử dụng", 400);
   }
 
-  if (
-    !user.verificationTokenExpiresAt ||
-    new Date() > new Date(user.verificationTokenExpiresAt)
-  ) {
+  if (!user.verificationTokenExpiresAt || new Date() > new Date(user.verificationTokenExpiresAt)) {
     await user.update({
-      verificationToken:          null,
+      verificationToken: null,
       verificationTokenExpiresAt: null,
     });
     throw new AppError("Token đã hết hạn. Vui lòng yêu cầu gửi lại link xác thực.", 400);
   }
 
   await user.update({
-    isVerified:                 true,
-    verificationToken:          null,
+    isVerified: true,
+    verificationToken: null,
     verificationTokenExpiresAt: null,
   });
 
@@ -783,9 +761,9 @@ exports.verifyEmail = async ({ token }) => {
   return {
     message: "Xác thực email thành công!",
     user: {
-      id:         user.id,
-      email:      user.email,
-      name:       user.name,
+      id: user.id,
+      email: user.email,
+      name: user.name,
       isVerified: true,
     },
   };
@@ -812,7 +790,7 @@ exports.resendVerificationEmail = async ({ email }) => {
     throw new AppError("Email này đã được xác thực rồi", 400);
   }
 
-  const verificationToken          = generateSecureToken();
+  const verificationToken = generateSecureToken();
   const verificationTokenExpiresAt = new Date(Date.now() + VERIFICATION_TOKEN_EXPIRES_MS);
 
   await user.update({
@@ -822,9 +800,9 @@ exports.resendVerificationEmail = async ({ email }) => {
 
   try {
     await emailService.sendVerificationEmail({
-      to:       user.email,
+      to: user.email,
       userName: user.name,
-      token:    verificationToken,
+      token: verificationToken,
     });
     logger.info(`RESEND VERIFICATION SUCCESS: email=${email}`);
   } catch (err) {
@@ -903,7 +881,7 @@ exports.forgotPassword = async ({ email }) => {
   }
 
   // Generate reset token + expiry
-  const passwordResetToken     = generateSecureToken();
+  const passwordResetToken = generateSecureToken();
   const passwordResetExpiresAt = new Date(Date.now() + PASSWORD_RESET_TOKEN_EXPIRES_MS);
 
   await user.update({
@@ -913,9 +891,9 @@ exports.forgotPassword = async ({ email }) => {
 
   try {
     await emailService.sendPasswordResetEmail({
-      to:       user.email,
+      to: user.email,
       userName: user.name,
-      token:    passwordResetToken,
+      token: passwordResetToken,
     });
     logger.info(`FORGOT PASSWORD SUCCESS: email=${email}`);
   } catch (err) {
@@ -926,7 +904,7 @@ exports.forgotPassword = async ({ email }) => {
      * Throw error để FE biết và hiển thị retry.
      */
     await user.update({
-      passwordResetToken:     null,
+      passwordResetToken: null,
       passwordResetExpiresAt: null,
     });
     throw new AppError("Không thể gửi email. Vui lòng thử lại sau.", 500);
@@ -978,22 +956,16 @@ exports.resetPassword = async ({ token, newPassword }) => {
   }
 
   // Check token có hết hạn chưa
-  if (
-    !user.passwordResetExpiresAt ||
-    new Date() > new Date(user.passwordResetExpiresAt)
-  ) {
+  if (!user.passwordResetExpiresAt || new Date() > new Date(user.passwordResetExpiresAt)) {
     /*
      * Token expired → cleanup luôn để giữ DB sạch.
      * User cần request "Forgot password" lại để lấy token mới.
      */
     await user.update({
-      passwordResetToken:     null,
+      passwordResetToken: null,
       passwordResetExpiresAt: null,
     });
-    throw new AppError(
-      "Token đã hết hạn. Vui lòng yêu cầu đặt lại mật khẩu mới.",
-      400
-    );
+    throw new AppError("Token đã hết hạn. Vui lòng yêu cầu đặt lại mật khẩu mới.", 400);
   }
 
   // Hash password mới với salt rounds 12 (consistent toàn project)
@@ -1001,8 +973,8 @@ exports.resetPassword = async ({ token, newPassword }) => {
 
   // Update password + clear reset token
   await user.update({
-    password:               hashed,
-    passwordResetToken:     null,
+    password: hashed,
+    passwordResetToken: null,
     passwordResetExpiresAt: null,
   });
 
@@ -1021,7 +993,7 @@ exports.resetPassword = async ({ token, newPassword }) => {
 
   return {
     message: "Đặt lại mật khẩu thành công! Vui lòng đăng nhập lại.",
-    email:   user.email,
+    email: user.email,
   };
 };
 
@@ -1076,13 +1048,7 @@ exports.resetPassword = async ({ token, newPassword }) => {
  *   - Generate deviceId mới (UUID) cho session sau đổi password — coi như
  *     1 phiên login mới của device hiện tại.
  */
-exports.changePassword = async ({
-  userId,
-  currentPassword,
-  newPassword,
-  ip,
-  userAgent,
-}) => {
+exports.changePassword = async ({ userId, currentPassword, newPassword, ip, userAgent }) => {
   // Bước 1: Lấy user từ DB (cần password hash để verify)
   const user = await User.findByPk(userId);
   if (!user) {
@@ -1131,10 +1097,7 @@ exports.changePassword = async ({
      */
     const isSameAsCurrent = await bcrypt.compare(newPassword, user.password);
     if (isSameAsCurrent) {
-      throw new AppError(
-        "Mật khẩu mới phải khác mật khẩu hiện tại",
-        400
-      );
+      throw new AppError("Mật khẩu mới phải khác mật khẩu hiện tại", 400);
     }
   }
 
@@ -1164,9 +1127,9 @@ exports.changePassword = async ({
    * UX tốt hơn vì user đang authenticated, không có lý do phải logout họ.
    * Pattern này được dùng bởi GitHub, Google, AWS Console, etc.
    */
-  const deviceId    = crypto.randomUUID();
-  const deviceName  = parseDeviceName(userAgent);
-  const accessToken  = generateAccessToken(user, deviceId);
+  const deviceId = crypto.randomUUID();
+  const deviceName = parseDeviceName(userAgent);
+  const accessToken = generateAccessToken(user, deviceId);
   const refreshToken = generateRefreshToken(user, deviceId);
 
   await createSession({
@@ -1175,7 +1138,7 @@ exports.changePassword = async ({
     refreshToken,
     deviceName,
     userAgent: userAgent || "Unknown",
-    ip:        ip || "Unknown",
+    ip: ip || "Unknown",
   });
 
   logger.info(
@@ -1190,10 +1153,10 @@ exports.changePassword = async ({
     accessToken,
     refreshToken,
     user: {
-      id:         user.id,
-      name:       user.name,
-      email:      user.email,
-      role:       user.role,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
       isVerified: user.isVerified,
       hasPassword: true, // Sau changePassword luôn có password
     },

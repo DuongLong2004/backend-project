@@ -128,8 +128,6 @@ router.get("/:id", verifyToken, orderController.getOrderById);
  */
 router.patch("/:id/cancel", verifyToken, orderController.cancelOrder);
 
-
-
 //  Admin cập nhật status đơn hàng
 router.patch("/:id/status", verifyToken, checkRole("admin"), orderController.updateOrderStatus);
 

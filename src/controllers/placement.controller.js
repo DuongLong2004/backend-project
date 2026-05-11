@@ -1,5 +1,5 @@
 const placementService = require("../services/placement.service");
-const catchAsync       = require("../utils/catchAsync");
+const catchAsync = require("../utils/catchAsync");
 const { sendResponse } = require("../utils/response");
 
 // GET /api/placements?placement=xxx  (public)

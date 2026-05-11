@@ -1,11 +1,11 @@
-
-
-
 const logger = require("../utils/logger");
 
+// Express error middleware MUST have 4 args (err, req, res, next)
+// to be recognized as error handler — even if `next` is unused.
+// eslint-disable-next-line no-unused-vars
 module.exports = (err, req, res, next) => {
   err.statusCode = err.statusCode || 500;
-  err.status     = err.status     || "error";
+  err.status = err.status || "error";
 
   const isDev = process.env.NODE_ENV !== "production";
 
@@ -78,14 +78,14 @@ module.exports = (err, req, res, next) => {
    * vì sẽ leak cả `stack`, `name`, etc. (security risk).
    */
   const customFields = {};
-  if (err.lockedUntil       !== undefined) customFields.lockedUntil       = err.lockedUntil;
-  if (err.minutesRemaining  !== undefined) customFields.minutesRemaining  = err.minutesRemaining;
+  if (err.lockedUntil !== undefined) customFields.lockedUntil = err.lockedUntil;
+  if (err.minutesRemaining !== undefined) customFields.minutesRemaining = err.minutesRemaining;
   if (err.attemptsRemaining !== undefined) customFields.attemptsRemaining = err.attemptsRemaining;
 
   res.status(err.statusCode).json({
-    status:  err.status,
+    status: err.status,
     message: err.message || "Internal Server Error",
-    data:    null,
+    data: null,
     ...customFields,
     // ✅ Chỉ trả stack trace khi development
     ...(isDev && { stack: err.stack }),

@@ -1,8 +1,8 @@
-const express  = require("express");
-const router   = express.Router();
+const express = require("express");
+const router = express.Router();
 const { upload, verifyAndSaveFile } = require("../middlewares/upload.middleware");
 const uploadController = require("../controllers/upload.controller");
-const { verifyToken }  = require("../middlewares/auth.middleware");
+const { verifyToken } = require("../middlewares/auth.middleware");
 
 router.post(
   "/users/avatar",

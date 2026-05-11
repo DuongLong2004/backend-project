@@ -1,6 +1,5 @@
 const xss = require("xss");
 
-
 const xssOptions = {
   whiteList: {},
   stripIgnoreTag: true,
@@ -11,7 +10,6 @@ const sanitizeValue = (value) => {
   if (typeof value !== "string") return value;
   return xss(value.trim(), xssOptions);
 };
-
 
 const sanitizeDeep = (data) => {
   if (typeof data === "string") return sanitizeValue(data);
@@ -26,10 +24,8 @@ const sanitizeDeep = (data) => {
     return result;
   }
 
-  
   return data;
 };
-
 
 module.exports = (schema) => {
   return (req, res, next) => {

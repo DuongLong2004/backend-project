@@ -1,5 +1,5 @@
-const wishlistService  = require("../services/wishlist.service");
-const catchAsync       = require("../utils/catchAsync");
+const wishlistService = require("../services/wishlist.service");
+const catchAsync = require("../utils/catchAsync");
 const { sendResponse } = require("../utils/response");
 
 // GET /api/wishlist
@@ -17,7 +17,7 @@ exports.getWishlistIds = catchAsync(async (req, res) => {
 // POST /api/wishlist/:productId
 exports.addWishlist = catchAsync(async (req, res) => {
   const data = await wishlistService.addWishlist({
-    userId:    req.user.id,
+    userId: req.user.id,
     productId: parseInt(req.params.productId),
   });
   return sendResponse(res, 201, "success", "Đã thêm vào yêu thích! ❤️", data);
@@ -26,7 +26,7 @@ exports.addWishlist = catchAsync(async (req, res) => {
 // DELETE /api/wishlist/:productId
 exports.removeWishlist = catchAsync(async (req, res) => {
   await wishlistService.removeWishlist({
-    userId:    req.user.id,
+    userId: req.user.id,
     productId: parseInt(req.params.productId),
   });
   return sendResponse(res, 200, "success", "Đã xóa khỏi yêu thích");

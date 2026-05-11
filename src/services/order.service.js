@@ -1,7 +1,7 @@
-const { Op }    = require("sequelize");
+const { Op } = require("sequelize");
 const sequelize = require("../config/db");
 const { Order, OrderItem, Product, ProductPlacement } = require("../models/index");
-const AppError  = require("../utils/AppError");
+const AppError = require("../utils/AppError");
 
 const { MAX_PAGE_LIMIT } = require("../config/constants");
 
@@ -22,7 +22,7 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
   }
 
   if (
-    !shippingInfo?.name  ||
+    !shippingInfo?.name ||
     !shippingInfo?.phone ||
     !shippingInfo?.email ||
     !shippingInfo?.address
@@ -31,12 +31,12 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
   }
 
   const result = await sequelize.transaction(async (t) => {
-    let totalAmount      = 0;
+    let totalAmount = 0;
     const orderItemsData = [];
 
     for (const item of items) {
       const product = await Product.findByPk(item.productId, {
-        lock:        t.LOCK.UPDATE,
+        lock: t.LOCK.UPDATE,
         transaction: t,
       });
 
@@ -55,11 +55,11 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
       if (item.placementId) {
         flashPlacement = await ProductPlacement.findOne({
           where: {
-            id:        item.placementId,
+            id: item.placementId,
             productId: item.productId,
             placement: "flashsale",
           },
-          lock:        t.LOCK.UPDATE,
+          lock: t.LOCK.UPDATE,
           transaction: t,
         });
 
@@ -67,10 +67,7 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
           const stockLeft = flashPlacement.stockLimit - flashPlacement.stockSold;
 
           if (stockLeft <= 0) {
-            throw new AppError(
-              `Sản phẩm "${product.title}" đã hết suất flash sale`,
-              409
-            );
+            throw new AppError(`Sản phẩm "${product.title}" đã hết suất flash sale`, 409);
           }
 
           if (stockLeft < item.quantity) {
@@ -84,10 +81,10 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
 
       let unitPrice = parsePrice(product.price);
       if (item.placementId && flashPlacement?.salePrice) {
-        const now        = new Date();
+        const now = new Date();
         const saleActive =
           (!flashPlacement.saleStartAt || flashPlacement.saleStartAt <= now) &&
-          (!flashPlacement.saleEndAt   || flashPlacement.saleEndAt   >= now);
+          (!flashPlacement.saleEndAt || flashPlacement.saleEndAt >= now);
 
         if (saleActive) {
           unitPrice = parsePrice(flashPlacement.salePrice);
@@ -96,9 +93,9 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
 
       totalAmount += unitPrice * item.quantity;
       orderItemsData.push({
-        productId:   product.id,
-        quantity:    item.quantity,
-        price:       unitPrice,
+        productId: product.id,
+        quantity: item.quantity,
+        price: unitPrice,
         placementId: item.placementId || null,
       });
     }
@@ -107,11 +104,11 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
       {
         userId,
         totalAmount,
-        shippingName:    shippingInfo.name,
-        shippingPhone:   shippingInfo.phone,
-        shippingEmail:   shippingInfo.email,
+        shippingName: shippingInfo.name,
+        shippingPhone: shippingInfo.phone,
+        shippingEmail: shippingInfo.email,
         shippingAddress: shippingInfo.address,
-        payMethod:       payMethod || "cod",
+        payMethod: payMethod || "cod",
       },
       { transaction: t }
     );
@@ -144,7 +141,7 @@ exports.createOrder = async ({ userId, items, shippingInfo, payMethod }) => {
   });
 
   return {
-    orderId:     result.id,
+    orderId: result.id,
     totalAmount: result.totalAmount,
   };
 };
@@ -164,47 +161,54 @@ exports.getMyOrders = async ({ userId, limit = 10, cursor = null }) => {
   const orders = await Order.findAll({
     where,
     attributes: [
-      "id", "status", "totalAmount", "createdAt",
-      "shippingName", "shippingPhone", "shippingEmail",
-      "shippingAddress", "payMethod",
+      "id",
+      "status",
+      "totalAmount",
+      "createdAt",
+      "shippingName",
+      "shippingPhone",
+      "shippingEmail",
+      "shippingAddress",
+      "payMethod",
     ],
     include: [
       {
-        model:      OrderItem,
+        model: OrderItem,
         attributes: ["quantity", "price"],
-        include:    [
-          { model: Product, attributes: ["id", "title", "img", "price"] },
-        ],
+        include: [{ model: Product, attributes: ["id", "title", "img", "price"] }],
       },
     ],
     order: [["createdAt", "DESC"]],
     limit: safeLimit + 1,
   });
 
-  const hasMore    = orders.length > safeLimit;
-  const data       = hasMore ? orders.slice(0, -1) : orders;
-  const nextCursor = hasMore
-    ? data[data.length - 1].createdAt.getTime().toString()
-    : null;
+  const hasMore = orders.length > safeLimit;
+  const data = hasMore ? orders.slice(0, -1) : orders;
+  const nextCursor = hasMore ? data[data.length - 1].createdAt.getTime().toString() : null;
 
   return { data, hasMore, nextCursor };
 };
 
 exports.getOrderById = async ({ orderId, requestUser }) => {
   const order = await Order.findOne({
-    where:      { id: orderId },
+    where: { id: orderId },
     attributes: [
-      "id", "userId", "status", "totalAmount", "createdAt",
-      "shippingName", "shippingPhone", "shippingEmail",
-      "shippingAddress", "payMethod",
+      "id",
+      "userId",
+      "status",
+      "totalAmount",
+      "createdAt",
+      "shippingName",
+      "shippingPhone",
+      "shippingEmail",
+      "shippingAddress",
+      "payMethod",
     ],
     include: [
       {
-        model:      OrderItem,
+        model: OrderItem,
         attributes: ["quantity", "price"],
-        include:    [
-          { model: Product, attributes: ["id", "title", "img", "price"] },
-        ],
+        include: [{ model: Product, attributes: ["id", "title", "img", "price"] }],
       },
     ],
   });
@@ -221,8 +225,8 @@ exports.getOrderById = async ({ orderId, requestUser }) => {
 exports.cancelOrder = async ({ orderId, requestUser }) => {
   await sequelize.transaction(async (t) => {
     const order = await Order.findByPk(orderId, {
-      include:     [{ model: OrderItem }],
-      lock:        t.LOCK.UPDATE,
+      include: [{ model: OrderItem }],
+      lock: t.LOCK.UPDATE,
       transaction: t,
     });
 
@@ -244,7 +248,7 @@ exports.cancelOrder = async ({ orderId, requestUser }) => {
       { status: "cancelled" },
       {
         where: {
-          id:     order.id,
+          id: order.id,
           status: { [Op.in]: ["pending", "confirmed"] },
         },
         transaction: t,
@@ -252,10 +256,7 @@ exports.cancelOrder = async ({ orderId, requestUser }) => {
     );
 
     if (affectedRows === 0) {
-      throw new AppError(
-        "Order đã được xử lý bởi một yêu cầu khác, vui lòng thử lại",
-        409
-      );
+      throw new AppError("Order đã được xử lý bởi một yêu cầu khác, vui lòng thử lại", 409);
     }
 
     for (const item of order.OrderItems) {
@@ -269,7 +270,7 @@ exports.cancelOrder = async ({ orderId, requestUser }) => {
           { stockSold: -item.quantity },
           {
             where: {
-              id:        item.placementId,
+              id: item.placementId,
               placement: "flashsale",
               stockSold: { [Op.gte]: item.quantity },
             },
@@ -282,8 +283,8 @@ exports.cancelOrder = async ({ orderId, requestUser }) => {
 };
 
 exports.getAllOrders = async ({ page = 1, limit = 20, status } = {}) => {
-  const safeLimit     = Math.min(Math.max(1, parseInt(limit, 10) || 20), MAX_PAGE_LIMIT);
-  const offset        = (page - 1) * safeLimit;
+  const safeLimit = Math.min(Math.max(1, parseInt(limit, 10) || 20), MAX_PAGE_LIMIT);
+  const offset = (page - 1) * safeLimit;
   const validStatuses = ["pending", "confirmed", "completed", "cancelled"];
 
   const where = {};
@@ -294,30 +295,35 @@ exports.getAllOrders = async ({ page = 1, limit = 20, status } = {}) => {
   const { count, rows } = await Order.findAndCountAll({
     where,
     attributes: [
-      "id", "userId", "status", "totalAmount", "createdAt",
-      "shippingName", "shippingPhone", "shippingEmail",
-      "shippingAddress", "payMethod",
+      "id",
+      "userId",
+      "status",
+      "totalAmount",
+      "createdAt",
+      "shippingName",
+      "shippingPhone",
+      "shippingEmail",
+      "shippingAddress",
+      "payMethod",
     ],
     include: [
       {
-        model:      OrderItem,
+        model: OrderItem,
         attributes: ["quantity", "price"],
-        include:    [
-          { model: Product, attributes: ["id", "title", "img"] },
-        ],
+        include: [{ model: Product, attributes: ["id", "title", "img"] }],
       },
     ],
-    order:  [["createdAt", "DESC"]],
-    limit:  safeLimit,
+    order: [["createdAt", "DESC"]],
+    limit: safeLimit,
     offset,
   });
 
   return {
     data: rows,
     meta: {
-      total:      count,
+      total: count,
       page,
-      limit:      safeLimit,
+      limit: safeLimit,
       totalPages: Math.ceil(count / safeLimit),
     },
   };
@@ -332,8 +338,8 @@ exports.updateOrderStatus = async ({ orderId, newStatus }) => {
 
   await sequelize.transaction(async (t) => {
     const order = await Order.findByPk(orderId, {
-      include:     [{ model: OrderItem }],
-      lock:        t.LOCK.UPDATE,
+      include: [{ model: OrderItem }],
+      lock: t.LOCK.UPDATE,
       transaction: t,
     });
 
@@ -355,7 +361,7 @@ exports.updateOrderStatus = async ({ orderId, newStatus }) => {
             { stockSold: -item.quantity },
             {
               where: {
-                id:        item.placementId,
+                id: item.placementId,
                 placement: "flashsale",
                 stockSold: { [Op.gte]: item.quantity },
               },

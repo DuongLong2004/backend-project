@@ -1,6 +1,6 @@
 const request = require("supertest");
-const bcrypt  = require("bcrypt");
-const jwt     = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 
 // ════════════════════════════════════════════════════════════════════════════
 // MOCKS
@@ -9,97 +9,103 @@ const jwt     = require("jsonwebtoken");
 jest.mock("../../src/config/redis", () => ({
   client: {
     isReady: false,
-    get:     jest.fn().mockResolvedValue(null),
-    setEx:   jest.fn().mockResolvedValue(true),
-    keys:    jest.fn().mockResolvedValue([]),
-    del:     jest.fn().mockResolvedValue(true),
+    get: jest.fn().mockResolvedValue(null),
+    setEx: jest.fn().mockResolvedValue(true),
+    keys: jest.fn().mockResolvedValue([]),
+    del: jest.fn().mockResolvedValue(true),
   },
   // SCAN helper (production-safe alternative to KEYS)
   scanKeys: jest.fn().mockResolvedValue([]),
   // Multi-device session API
-  createSession:       jest.fn().mockResolvedValue(true),
-  getSession:          jest.fn().mockResolvedValue(null),
-  touchSession:        jest.fn().mockResolvedValue(true),
-  deleteSession:       jest.fn().mockResolvedValue(true),
-  listSessions:        jest.fn().mockResolvedValue([]),
-  deleteAllSessions:   jest.fn().mockResolvedValue(true),
+  createSession: jest.fn().mockResolvedValue(true),
+  getSession: jest.fn().mockResolvedValue(null),
+  touchSession: jest.fn().mockResolvedValue(true),
+  deleteSession: jest.fn().mockResolvedValue(true),
+  listSessions: jest.fn().mockResolvedValue([]),
+  deleteAllSessions: jest.fn().mockResolvedValue(true),
   deleteOtherSessions: jest.fn().mockResolvedValue(true),
 }));
 
 // Mock email service — không gửi email thật khi test
 jest.mock("../../src/services/email.service", () => ({
-  sendVerificationEmail:  jest.fn().mockResolvedValue(true),
+  sendVerificationEmail: jest.fn().mockResolvedValue(true),
   sendPasswordResetEmail: jest.fn().mockResolvedValue(true),
   sendAccountLockedEmail: jest.fn().mockResolvedValue(true),
 }));
 
 jest.mock("../../src/models/User", () => ({
-  findOne:   jest.fn(),
-  create:    jest.fn(),
-  findAll:   jest.fn(),
-  findByPk:  jest.fn(),
-  update:    jest.fn(),
-  hasMany:   jest.fn(),
+  findOne: jest.fn(),
+  create: jest.fn(),
+  findAll: jest.fn(),
+  findByPk: jest.fn(),
+  update: jest.fn(),
+  hasMany: jest.fn(),
   belongsTo: jest.fn(),
 }));
 
 jest.mock("../../src/models/index", () => ({
   User: require("../../src/models/User"),
   Order: {
-    create:  jest.fn(), findAll: jest.fn(),
-    findOne: jest.fn(), findByPk: jest.fn(),
-    update:  jest.fn().mockResolvedValue([1]),
-    hasMany: jest.fn(), belongsTo: jest.fn(),
+    create: jest.fn(),
+    findAll: jest.fn(),
+    findOne: jest.fn(),
+    findByPk: jest.fn(),
+    update: jest.fn().mockResolvedValue([1]),
+    hasMany: jest.fn(),
+    belongsTo: jest.fn(),
   },
   OrderItem: {
-    bulkCreate: jest.fn(), belongsTo: jest.fn(),
+    bulkCreate: jest.fn(),
+    belongsTo: jest.fn(),
   },
   Product: {
-    findByPk:        jest.fn(),
-    findAll:         jest.fn(),
+    findByPk: jest.fn(),
+    findAll: jest.fn(),
     findAndCountAll: jest.fn(),
-    create:          jest.fn(),
-    update:          jest.fn(),
-    increment:       jest.fn().mockResolvedValue(true),
-    hasMany:         jest.fn(),
-    belongsTo:       jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    increment: jest.fn().mockResolvedValue(true),
+    hasMany: jest.fn(),
+    belongsTo: jest.fn(),
   },
   ProductSpec: {
     bulkCreate: jest.fn(),
-    destroy:    jest.fn(),
-    belongsTo:  jest.fn(),
+    destroy: jest.fn(),
+    belongsTo: jest.fn(),
   },
   Review: {
-    findAll:   jest.fn(),
-    findOne:   jest.fn(),
-    findByPk:  jest.fn(),
-    create:    jest.fn(),
-    hasMany:   jest.fn(),
+    findAll: jest.fn(),
+    findOne: jest.fn(),
+    findByPk: jest.fn(),
+    create: jest.fn(),
+    hasMany: jest.fn(),
     belongsTo: jest.fn(),
   },
   Wishlist: {
-    findAll:      jest.fn(),
-    findOne:      jest.fn(),
+    findAll: jest.fn(),
+    findOne: jest.fn(),
     findOrCreate: jest.fn(),
-    hasMany:      jest.fn(),
-    belongsTo:    jest.fn(),
+    hasMany: jest.fn(),
+    belongsTo: jest.fn(),
   },
   ProductPlacement: {
-    findOne:   jest.fn(),
+    findOne: jest.fn(),
     increment: jest.fn().mockResolvedValue(true),
     belongsTo: jest.fn(),
-    hasMany:   jest.fn(),
+    hasMany: jest.fn(),
   },
   sequelize: {
-    sync:        jest.fn().mockResolvedValue(true),
-    define:      jest.fn(),
-    fn:          jest.fn().mockReturnValue("fn"),
-    col:         jest.fn().mockReturnValue("col"),
-    literal:     jest.fn().mockReturnValue({}),
-    escape:      jest.fn((val) => `'${val}'`),
-    transaction: jest.fn().mockImplementation(async (cb) => cb({
-      LOCK: { UPDATE: "UPDATE" },
-    })),
+    sync: jest.fn().mockResolvedValue(true),
+    define: jest.fn(),
+    fn: jest.fn().mockReturnValue("fn"),
+    col: jest.fn().mockReturnValue("col"),
+    literal: jest.fn().mockReturnValue({}),
+    escape: jest.fn((val) => `'${val}'`),
+    transaction: jest.fn().mockImplementation(async (cb) =>
+      cb({
+        LOCK: { UPDATE: "UPDATE" },
+      })
+    ),
   },
 }));
 
@@ -110,21 +116,18 @@ jest.mock("../../src/middlewares/auth.middleware", () => ({
   },
 }));
 
-const app  = require("../../src/app");
+const app = require("../../src/app");
 const User = require("../../src/models/User");
 const { Order, OrderItem, Product, Review, Wishlist } = require("../../src/models/index");
 const emailService = require("../../src/services/email.service");
-const {
-  getSession,
-  deleteAllSessions,
-} = require("../../src/config/redis");
+const { getSession } = require("../../src/config/redis");
 
 // ════════════════════════════════════════════════════════════════════════════
 // TEST CONSTANTS
 // ════════════════════════════════════════════════════════════════════════════
 
 const VALID_PASSWORD = "Test1234";
-const NEW_PASSWORD   = "NewPass1234";
+const NEW_PASSWORD = "NewPass1234";
 const INVALID_PASSWORDS = {
   TOO_SHORT: "Test1",
   NO_NUMBER: "OnlyLetters",
@@ -148,8 +151,11 @@ describe("POST /api/auth/register", () => {
   it("should register successfully and trigger email send", async () => {
     User.findOne.mockResolvedValue(null);
     User.create.mockResolvedValue({
-      id: 1, name: "New User", email: "new@gmail.com",
-      role: "user", isVerified: false,
+      id: 1,
+      name: "New User",
+      email: "new@gmail.com",
+      role: "user",
+      isVerified: false,
     });
 
     const res = await request(app)
@@ -165,8 +171,11 @@ describe("POST /api/auth/register", () => {
   it("should still return 201 even if email send fails (best-effort)", async () => {
     User.findOne.mockResolvedValue(null);
     User.create.mockResolvedValue({
-      id: 1, name: "New User", email: "new@gmail.com",
-      role: "user", isVerified: false,
+      id: 1,
+      name: "New User",
+      email: "new@gmail.com",
+      role: "user",
+      isVerified: false,
     });
     emailService.sendVerificationEmail.mockRejectedValueOnce(new Error("SMTP down"));
 
@@ -189,9 +198,7 @@ describe("POST /api/auth/register", () => {
   });
 
   it("should return 400 if fields missing", async () => {
-    const res = await request(app)
-      .post("/api/auth/register")
-      .send({ email: "test@gmail.com" });
+    const res = await request(app).post("/api/auth/register").send({ email: "test@gmail.com" });
 
     expect(res.statusCode).toBe(400);
   });
@@ -234,8 +241,11 @@ describe("POST /api/auth/login", () => {
   it("should login successfully when verified", async () => {
     const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
     User.findOne.mockResolvedValue({
-      id: 1, name: "Test User", email: "test@gmail.com",
-      password: hashedPassword, role: "user",
+      id: 1,
+      name: "Test User",
+      email: "test@gmail.com",
+      password: hashedPassword,
+      role: "user",
       isVerified: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
@@ -255,8 +265,11 @@ describe("POST /api/auth/login", () => {
   it("should return 403 if email not verified", async () => {
     const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
     User.findOne.mockResolvedValue({
-      id: 1, name: "Unverified User", email: "unverified@gmail.com",
-      password: hashedPassword, role: "user",
+      id: 1,
+      name: "Unverified User",
+      email: "unverified@gmail.com",
+      password: hashedPassword,
+      role: "user",
       isVerified: false,
       update: jest.fn(),
     });
@@ -282,7 +295,10 @@ describe("POST /api/auth/login", () => {
   it("should return 401 if password wrong", async () => {
     const hashedPassword = await bcrypt.hash(VALID_PASSWORD, 12);
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com", password: hashedPassword, role: "user",
+      id: 1,
+      email: "test@gmail.com",
+      password: hashedPassword,
+      role: "user",
       isVerified: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
@@ -297,9 +313,7 @@ describe("POST /api/auth/login", () => {
   });
 
   it("should return 400 if fields missing", async () => {
-    const res = await request(app)
-      .post("/api/auth/login")
-      .send({ email: "test@gmail.com" });
+    const res = await request(app).post("/api/auth/login").send({ email: "test@gmail.com" });
 
     expect(res.statusCode).toBe(400);
   });
@@ -314,9 +328,12 @@ describe("POST /api/auth/login", () => {
     const updateMock = jest.fn().mockResolvedValue(true);
 
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com", password: hashedPassword,
-      role: "user", isVerified: true,
-      failedLoginAttempts: 2,    // đã sai 2 lần
+      id: 1,
+      email: "test@gmail.com",
+      password: hashedPassword,
+      role: "user",
+      isVerified: true,
+      failedLoginAttempts: 2, // đã sai 2 lần
       lockedUntil: null,
       update: updateMock,
     });
@@ -329,9 +346,7 @@ describe("POST /api/auth/login", () => {
     expect(res.body).toHaveProperty("attemptsRemaining", 2); // còn 2 lần (5-3=2)
 
     // Counter được update lên 3
-    expect(updateMock).toHaveBeenCalledWith(
-      expect.objectContaining({ failedLoginAttempts: 3 })
-    );
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ failedLoginAttempts: 3 }));
   });
 
   it("should reset failedLoginAttempts to 0 on successful login (Phần 8)", async () => {
@@ -340,9 +355,13 @@ describe("POST /api/auth/login", () => {
 
     // User đã sai 3 lần trước đó, giờ login đúng
     User.findOne.mockResolvedValue({
-      id: 1, name: "Test User", email: "test@gmail.com",
-      password: hashedPassword, role: "user", isVerified: true,
-      failedLoginAttempts: 3,    // đã sai 3 lần
+      id: 1,
+      name: "Test User",
+      email: "test@gmail.com",
+      password: hashedPassword,
+      role: "user",
+      isVerified: true,
+      failedLoginAttempts: 3, // đã sai 3 lần
       lockedUntil: null,
       update: updateMock,
     });
@@ -356,7 +375,7 @@ describe("POST /api/auth/login", () => {
     // Counter được reset về 0 + clear lockedUntil
     expect(updateMock).toHaveBeenCalledWith({
       failedLoginAttempts: 0,
-      lockedUntil:         null,
+      lockedUntil: null,
     });
   });
 
@@ -366,9 +385,13 @@ describe("POST /api/auth/login", () => {
 
     // User đã sai 4 lần → lần này sai lần 5 → trigger lock
     User.findOne.mockResolvedValue({
-      id: 1, name: "Test User", email: "test@gmail.com",
-      password: hashedPassword, role: "user", isVerified: true,
-      failedLoginAttempts: 4,    // đã sai 4 lần
+      id: 1,
+      name: "Test User",
+      email: "test@gmail.com",
+      password: hashedPassword,
+      role: "user",
+      isVerified: true,
+      failedLoginAttempts: 4, // đã sai 4 lần
       lockedUntil: null,
       update: updateMock,
     });
@@ -387,7 +410,7 @@ describe("POST /api/auth/login", () => {
     expect(updateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         failedLoginAttempts: 5,
-        lockedUntil:         expect.any(Date),
+        lockedUntil: expect.any(Date),
       })
     );
 
@@ -395,7 +418,7 @@ describe("POST /api/auth/login", () => {
     expect(emailService.sendAccountLockedEmail).toHaveBeenCalledTimes(1);
     expect(emailService.sendAccountLockedEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to:       "test@gmail.com",
+        to: "test@gmail.com",
         userName: "Test User",
       })
     );
@@ -406,10 +429,13 @@ describe("POST /api/auth/login", () => {
     const futureLockTime = new Date(Date.now() + 10 * 60 * 1000); // còn 10 phút
 
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com", password: hashedPassword,
-      role: "user", isVerified: true,
+      id: 1,
+      email: "test@gmail.com",
+      password: hashedPassword,
+      role: "user",
+      isVerified: true,
       failedLoginAttempts: 5,
-      lockedUntil: futureLockTime,    // đang bị khoá
+      lockedUntil: futureLockTime, // đang bị khoá
       update: jest.fn(),
     });
 
@@ -433,10 +459,14 @@ describe("POST /api/auth/login", () => {
     const updateMock = jest.fn().mockResolvedValue(true);
 
     User.findOne.mockResolvedValue({
-      id: 1, name: "Test User", email: "test@gmail.com",
-      password: hashedPassword, role: "user", isVerified: true,
+      id: 1,
+      name: "Test User",
+      email: "test@gmail.com",
+      password: hashedPassword,
+      role: "user",
+      isVerified: true,
       failedLoginAttempts: 5,
-      lockedUntil: pastLockTime,    // đã hết hạn lock
+      lockedUntil: pastLockTime, // đã hết hạn lock
       update: updateMock,
     });
 
@@ -451,7 +481,7 @@ describe("POST /api/auth/login", () => {
     // Counter + lockedUntil được reset
     expect(updateMock).toHaveBeenCalledWith({
       failedLoginAttempts: 0,
-      lockedUntil:         null,
+      lockedUntil: null,
     });
   });
 });
@@ -466,15 +496,16 @@ describe("GET /api/auth/verify-email", () => {
   it("should verify email successfully (JSON mode)", async () => {
     const futureDate = new Date(Date.now() + 60 * 60 * 1000);
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com", name: "Test User",
+      id: 1,
+      email: "test@gmail.com",
+      name: "Test User",
       verificationToken: "valid_token_xyz",
       verificationTokenExpiresAt: futureDate,
       isVerified: false,
       update: jest.fn().mockResolvedValue(true),
     });
 
-    const res = await request(app)
-      .get("/api/auth/verify-email?token=valid_token_xyz&format=json");
+    const res = await request(app).get("/api/auth/verify-email?token=valid_token_xyz&format=json");
 
     expect(res.statusCode).toBe(200);
     expect(res.body.message).toContain("thành công");
@@ -484,31 +515,30 @@ describe("GET /api/auth/verify-email", () => {
   it("should redirect to FE success page (HTML mode)", async () => {
     const futureDate = new Date(Date.now() + 60 * 60 * 1000);
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com", name: "Test User",
+      id: 1,
+      email: "test@gmail.com",
+      name: "Test User",
       verificationToken: "valid_token_xyz",
       verificationTokenExpiresAt: futureDate,
       isVerified: false,
       update: jest.fn().mockResolvedValue(true),
     });
 
-    const res = await request(app)
-      .get("/api/auth/verify-email?token=valid_token_xyz");
+    const res = await request(app).get("/api/auth/verify-email?token=valid_token_xyz");
 
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toContain("/verify-email-success");
   });
 
   it("should return 400 if token missing (JSON mode)", async () => {
-    const res = await request(app)
-      .get("/api/auth/verify-email?format=json");
+    const res = await request(app).get("/api/auth/verify-email?format=json");
 
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("required");
   });
 
   it("should redirect to error page if token missing (HTML mode)", async () => {
-    const res = await request(app)
-      .get("/api/auth/verify-email");
+    const res = await request(app).get("/api/auth/verify-email");
 
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toContain("/verify-email-error");
@@ -518,8 +548,7 @@ describe("GET /api/auth/verify-email", () => {
   it("should return 400 if token invalid (JSON mode)", async () => {
     User.findOne.mockResolvedValue(null);
 
-    const res = await request(app)
-      .get("/api/auth/verify-email?token=invalid_xxx&format=json");
+    const res = await request(app).get("/api/auth/verify-email?token=invalid_xxx&format=json");
 
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("không hợp lệ");
@@ -528,15 +557,15 @@ describe("GET /api/auth/verify-email", () => {
   it("should return 400 if token expired (JSON mode)", async () => {
     const pastDate = new Date(Date.now() - 60 * 60 * 1000);
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com",
+      id: 1,
+      email: "test@gmail.com",
       verificationToken: "expired_token",
       verificationTokenExpiresAt: pastDate,
       isVerified: false,
       update: jest.fn().mockResolvedValue(true),
     });
 
-    const res = await request(app)
-      .get("/api/auth/verify-email?token=expired_token&format=json");
+    const res = await request(app).get("/api/auth/verify-email?token=expired_token&format=json");
 
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("hết hạn");
@@ -552,7 +581,9 @@ describe("POST /api/auth/resend-verification", () => {
 
   it("should resend verification email successfully", async () => {
     User.findOne.mockResolvedValue({
-      id: 1, email: "unverified@gmail.com", name: "User",
+      id: 1,
+      email: "unverified@gmail.com",
+      name: "User",
       isVerified: false,
       update: jest.fn().mockResolvedValue(true),
     });
@@ -578,7 +609,9 @@ describe("POST /api/auth/resend-verification", () => {
 
   it("should return 400 if email already verified", async () => {
     User.findOne.mockResolvedValue({
-      id: 1, email: "verified@gmail.com", name: "User",
+      id: 1,
+      email: "verified@gmail.com",
+      name: "User",
       isVerified: true,
       update: jest.fn(),
     });
@@ -601,7 +634,9 @@ describe("POST /api/auth/forgot-password", () => {
 
   it("should send reset email successfully for verified user", async () => {
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com", name: "Test User",
+      id: 1,
+      email: "test@gmail.com",
+      name: "Test User",
       password: "$2b$12$fakeHashedPasswordForTest",
       isVerified: true,
       update: jest.fn().mockResolvedValue(true),
@@ -616,9 +651,9 @@ describe("POST /api/auth/forgot-password", () => {
     expect(emailService.sendPasswordResetEmail).toHaveBeenCalledTimes(1);
     expect(emailService.sendPasswordResetEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to:       "test@gmail.com",
+        to: "test@gmail.com",
         userName: "Test User",
-        token:    expect.any(String),
+        token: expect.any(String),
       })
     );
   });
@@ -636,7 +671,9 @@ describe("POST /api/auth/forgot-password", () => {
 
   it("should return 200 silent success if user not verified (anti-enumeration)", async () => {
     User.findOne.mockResolvedValue({
-      id: 1, email: "unverified@gmail.com", name: "User",
+      id: 1,
+      email: "unverified@gmail.com",
+      name: "User",
       isVerified: false,
       update: jest.fn(),
     });
@@ -652,7 +689,9 @@ describe("POST /api/auth/forgot-password", () => {
   it("should cleanup token and return 500 if email send fails", async () => {
     const updateMock = jest.fn().mockResolvedValue(true);
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com", name: "User",
+      id: 1,
+      email: "test@gmail.com",
+      name: "User",
       password: "$2b$12$fakeHashedPasswordForTest",
       isVerified: true,
       update: updateMock,
@@ -667,7 +706,7 @@ describe("POST /api/auth/forgot-password", () => {
     // update gọi 2 lần: lần 1 set token, lần 2 cleanup
     expect(updateMock).toHaveBeenCalledTimes(2);
     expect(updateMock).toHaveBeenLastCalledWith({
-      passwordResetToken:     null,
+      passwordResetToken: null,
       passwordResetExpiresAt: null,
     });
   });
@@ -681,9 +720,7 @@ describe("POST /api/auth/forgot-password", () => {
   });
 
   it("should return 400 if email missing", async () => {
-    const res = await request(app)
-      .post("/api/auth/forgot-password")
-      .send({});
+    const res = await request(app).post("/api/auth/forgot-password").send({});
 
     expect(res.statusCode).toBe(400);
   });
@@ -700,7 +737,9 @@ describe("POST /api/auth/reset-password", () => {
     const futureDate = new Date(Date.now() + 60 * 60 * 1000);
     const updateMock = jest.fn().mockResolvedValue(true);
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com", name: "User",
+      id: 1,
+      email: "test@gmail.com",
+      name: "User",
       passwordResetToken: "valid_reset_token",
       passwordResetExpiresAt: futureDate,
       update: updateMock,
@@ -717,8 +756,8 @@ describe("POST /api/auth/reset-password", () => {
     // Check password đã được hash
     expect(updateMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        password:               expect.any(String),
-        passwordResetToken:     null,
+        password: expect.any(String),
+        passwordResetToken: null,
         passwordResetExpiresAt: null,
       })
     );
@@ -744,7 +783,8 @@ describe("POST /api/auth/reset-password", () => {
     const pastDate = new Date(Date.now() - 60 * 60 * 1000);
     const updateMock = jest.fn().mockResolvedValue(true);
     User.findOne.mockResolvedValue({
-      id: 1, email: "test@gmail.com",
+      id: 1,
+      email: "test@gmail.com",
       passwordResetToken: "expired_token",
       passwordResetExpiresAt: pastDate,
       update: updateMock,
@@ -758,7 +798,7 @@ describe("POST /api/auth/reset-password", () => {
     expect(res.body.message).toContain("hết hạn");
     // Cleanup token expired
     expect(updateMock).toHaveBeenCalledWith({
-      passwordResetToken:     null,
+      passwordResetToken: null,
       passwordResetExpiresAt: null,
     });
   });
@@ -790,9 +830,7 @@ describe("POST /api/auth/reset-password", () => {
   });
 
   it("should return 400 if newPassword missing", async () => {
-    const res = await request(app)
-      .post("/api/auth/reset-password")
-      .send({ token: "valid_token" });
+    const res = await request(app).post("/api/auth/reset-password").send({ token: "valid_token" });
 
     expect(res.statusCode).toBe(400);
   });
@@ -823,12 +861,10 @@ describe("POST /api/auth/change-password", () => {
     const mockUser = await createMockUser(VALID_PASSWORD);
     User.findByPk.mockResolvedValue(mockUser);
 
-    const res = await request(app)
-      .post("/api/auth/change-password")
-      .send({
-        currentPassword: VALID_PASSWORD,
-        newPassword:     NEW_PASSWORD,
-      });
+    const res = await request(app).post("/api/auth/change-password").send({
+      currentPassword: VALID_PASSWORD,
+      newPassword: NEW_PASSWORD,
+    });
 
     expect(res.statusCode).toBe(200);
     expect(res.body.message).toContain("thành công");
@@ -861,12 +897,10 @@ describe("POST /api/auth/change-password", () => {
     const mockUser = await createMockUser(VALID_PASSWORD);
     User.findByPk.mockResolvedValue(mockUser);
 
-    const res = await request(app)
-      .post("/api/auth/change-password")
-      .send({
-        currentPassword: "WrongPass1234",
-        newPassword:     NEW_PASSWORD,
-      });
+    const res = await request(app).post("/api/auth/change-password").send({
+      currentPassword: "WrongPass1234",
+      newPassword: NEW_PASSWORD,
+    });
 
     expect(res.statusCode).toBe(401);
     expect(res.body.message).toContain("không đúng");
@@ -879,12 +913,10 @@ describe("POST /api/auth/change-password", () => {
     const mockUser = await createMockUser(VALID_PASSWORD);
     User.findByPk.mockResolvedValue(mockUser);
 
-    const res = await request(app)
-      .post("/api/auth/change-password")
-      .send({
-        currentPassword: VALID_PASSWORD,
-        newPassword:     VALID_PASSWORD, // trùng
-      });
+    const res = await request(app).post("/api/auth/change-password").send({
+      currentPassword: VALID_PASSWORD,
+      newPassword: VALID_PASSWORD, // trùng
+    });
 
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("khác mật khẩu hiện tại");
@@ -892,12 +924,10 @@ describe("POST /api/auth/change-password", () => {
   });
 
   it("should return 400 if newPassword fails password policy", async () => {
-    const res = await request(app)
-      .post("/api/auth/change-password")
-      .send({
-        currentPassword: VALID_PASSWORD,
-        newPassword:     INVALID_PASSWORDS.TOO_SHORT,
-      });
+    const res = await request(app).post("/api/auth/change-password").send({
+      currentPassword: VALID_PASSWORD,
+      newPassword: INVALID_PASSWORDS.TOO_SHORT,
+    });
 
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("ít nhất 8 ký tự");
@@ -923,12 +953,10 @@ describe("POST /api/auth/change-password", () => {
     // Token valid nhưng user đã bị xóa khỏi DB
     User.findByPk.mockResolvedValue(null);
 
-    const res = await request(app)
-      .post("/api/auth/change-password")
-      .send({
-        currentPassword: VALID_PASSWORD,
-        newPassword:     NEW_PASSWORD,
-      });
+    const res = await request(app).post("/api/auth/change-password").send({
+      currentPassword: VALID_PASSWORD,
+      newPassword: NEW_PASSWORD,
+    });
 
     expect(res.statusCode).toBe(404);
     expect(res.body.message).toBe("User not found");
@@ -943,25 +971,27 @@ describe("POST /api/auth/refresh", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("should refresh token successfully", async () => {
-  const refreshToken = generateRefreshToken(1, "test-device-uuid");
+    const refreshToken = generateRefreshToken(1, "test-device-uuid");
 
-  // getSession trả về session với refreshToken match
-  getSession.mockResolvedValue({
-    refreshToken,
-    deviceName: "Test Device",
-    userAgent: "test",
-    ip: "::1",
+    // getSession trả về session với refreshToken match
+    getSession.mockResolvedValue({
+      refreshToken,
+      deviceName: "Test Device",
+      userAgent: "test",
+      ip: "::1",
+    });
+
+    User.findByPk.mockResolvedValue({
+      id: 1,
+      email: "test@gmail.com",
+      role: "user",
+      update: jest.fn().mockResolvedValue(true),
+    });
+
+    const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data).toHaveProperty("accessToken");
   });
-
-  User.findByPk.mockResolvedValue({
-    id: 1, email: "test@gmail.com", role: "user",
-    update: jest.fn().mockResolvedValue(true),
-  });
-
-  const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
-  expect(res.statusCode).toBe(200);
-  expect(res.body.data).toHaveProperty("accessToken");
-});
 
   it("should return 400 if refreshToken missing", async () => {
     const res = await request(app).post("/api/auth/refresh").send({});
@@ -978,35 +1008,35 @@ describe("POST /api/auth/refresh", () => {
   });
 
   it("should return 401 if refreshToken revoked", async () => {
-  const refreshToken = generateRefreshToken(1, "test-device-uuid");
+    const refreshToken = generateRefreshToken(1, "test-device-uuid");
 
-  // session không tồn tại trong Redis
-  getSession.mockResolvedValue(null);
+    // session không tồn tại trong Redis
+    getSession.mockResolvedValue(null);
 
-  const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
-  expect(res.statusCode).toBe(401);
-  expect(res.body.message).toBe("Session has been revoked");
-});
+    const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
+    expect(res.statusCode).toBe(401);
+    expect(res.body.message).toBe("Session has been revoked");
+  });
 
   it("should cleanup orphan token if user not found", async () => {
-  const { deleteSession } = require("../../src/config/redis");
-  const refreshToken = generateRefreshToken(1, "test-device-uuid");
+    const { deleteSession } = require("../../src/config/redis");
+    const refreshToken = generateRefreshToken(1, "test-device-uuid");
 
-  getSession.mockResolvedValue({
-    refreshToken,
-    deviceName: "Test Device",
-    userAgent: "test",
-    ip: "::1",
+    getSession.mockResolvedValue({
+      refreshToken,
+      deviceName: "Test Device",
+      userAgent: "test",
+      ip: "::1",
+    });
+    User.findByPk.mockResolvedValue(null);
+
+    const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
+
+    expect(res.statusCode).toBe(401);
+    expect(res.body.message).toBe("User not found");
+    // Phần 5: deleteSession được gọi với (userId, deviceId)
+    expect(deleteSession).toHaveBeenCalledWith(1, "test-device-uuid");
   });
-  User.findByPk.mockResolvedValue(null);
-
-  const res = await request(app).post("/api/auth/refresh").send({ refreshToken });
-
-  expect(res.statusCode).toBe(401);
-  expect(res.body.message).toBe("User not found");
-  // Phần 5: deleteSession được gọi với (userId, deviceId)
-  expect(deleteSession).toHaveBeenCalledWith(1, "test-device-uuid");
-});
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1059,7 +1089,10 @@ describe("GET /api/users/:id", () => {
 
   it("should return user by id (owner)", async () => {
     User.findByPk.mockResolvedValue({
-      id: 1, name: "Test", email: "t@gmail.com", role: "user",
+      id: 1,
+      name: "Test",
+      email: "t@gmail.com",
+      role: "user",
     });
     const res = await request(app).get("/api/users/1");
     expect(res.statusCode).toBe(200);
@@ -1085,7 +1118,11 @@ describe("PUT /api/users/:id", () => {
 
   it("should update user successfully (owner)", async () => {
     User.findByPk.mockResolvedValue({
-      id: 1, name: "Old", email: "t@gmail.com", age: 20, role: "user",
+      id: 1,
+      name: "Old",
+      email: "t@gmail.com",
+      age: 20,
+      role: "user",
       update: jest.fn().mockResolvedValue(true),
     });
     const res = await request(app).put("/api/users/1").send({ name: "New Name" });
@@ -1155,7 +1192,10 @@ describe("GET /api/products/:id", () => {
 
   it("should return product detail", async () => {
     Product.findByPk.mockResolvedValue({
-      id: 1, title: "iPhone 16", price: 33990000, specs: [],
+      id: 1,
+      title: "iPhone 16",
+      price: 33990000,
+      specs: [],
     });
     const res = await request(app).get("/api/products/1");
     expect(res.statusCode).toBe(200);
@@ -1178,18 +1218,26 @@ describe("POST /api/orders", () => {
 
   it("should create order successfully", async () => {
     Product.findByPk.mockResolvedValue({
-      id: 1, title: "iPhone", price: 33990000, stock: 10,
+      id: 1,
+      title: "iPhone",
+      price: 33990000,
+      stock: 10,
     });
     Order.create.mockResolvedValue({ id: 1, totalAmount: 67980000 });
     OrderItem.bulkCreate.mockResolvedValue([]);
     Product.increment.mockResolvedValue(true);
 
-    const res = await request(app).post("/api/orders").send({
-      items: [{ productId: 1, quantity: 2 }],
-      shippingInfo: {
-        name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC",
-      },
-    });
+    const res = await request(app)
+      .post("/api/orders")
+      .send({
+        items: [{ productId: 1, quantity: 2 }],
+        shippingInfo: {
+          name: "An",
+          phone: "0909123456",
+          email: "a@gmail.com",
+          address: "123 ABC",
+        },
+      });
     expect(res.statusCode).toBe(201);
     expect(res.body.data).toHaveProperty("orderId");
   });
@@ -1202,25 +1250,38 @@ describe("POST /api/orders", () => {
 
   it("should return 404 if product not found", async () => {
     Product.findByPk.mockResolvedValue(null);
-    const res = await request(app).post("/api/orders").send({
-      items: [{ productId: 999, quantity: 1 }],
-      shippingInfo: {
-        name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC",
-      },
-    });
+    const res = await request(app)
+      .post("/api/orders")
+      .send({
+        items: [{ productId: 999, quantity: 1 }],
+        shippingInfo: {
+          name: "An",
+          phone: "0909123456",
+          email: "a@gmail.com",
+          address: "123 ABC",
+        },
+      });
     expect(res.statusCode).toBe(404);
   });
 
   it("should return 400 if out of stock", async () => {
     Product.findByPk.mockResolvedValue({
-      id: 1, title: "iPhone", price: 33990000, stock: 0,
+      id: 1,
+      title: "iPhone",
+      price: 33990000,
+      stock: 0,
     });
-    const res = await request(app).post("/api/orders").send({
-      items: [{ productId: 1, quantity: 5 }],
-      shippingInfo: {
-        name: "An", phone: "0909123456", email: "a@gmail.com", address: "123 ABC",
-      },
-    });
+    const res = await request(app)
+      .post("/api/orders")
+      .send({
+        items: [{ productId: 1, quantity: 5 }],
+        shippingInfo: {
+          name: "An",
+          phone: "0909123456",
+          email: "a@gmail.com",
+          address: "123 ABC",
+        },
+      });
     expect(res.statusCode).toBe(400);
     expect(res.body.message).toContain("chỉ còn");
   });
@@ -1253,7 +1314,10 @@ describe("GET /api/orders/:id", () => {
 
   it("should return order detail", async () => {
     Order.findOne.mockResolvedValue({
-      id: 1, userId: 1, status: "pending", OrderItems: [],
+      id: 1,
+      userId: 1,
+      status: "pending",
+      OrderItems: [],
     });
     const res = await request(app).get("/api/orders/1");
     expect(res.statusCode).toBe(200);
@@ -1267,7 +1331,10 @@ describe("GET /api/orders/:id", () => {
 
   it("should return 403 if not owner", async () => {
     Order.findOne.mockResolvedValue({
-      id: 1, userId: 99, status: "pending", OrderItems: [],
+      id: 1,
+      userId: 99,
+      status: "pending",
+      OrderItems: [],
     });
     const res = await request(app).get("/api/orders/1");
     expect(res.statusCode).toBe(403);
@@ -1279,7 +1346,9 @@ describe("PATCH /api/orders/:id/cancel", () => {
 
   it("should cancel order", async () => {
     Order.findByPk.mockResolvedValue({
-      id: 1, userId: 1, status: "pending",
+      id: 1,
+      userId: 1,
+      status: "pending",
       OrderItems: [],
       update: jest.fn().mockResolvedValue(true),
     });
@@ -1297,7 +1366,11 @@ describe("PATCH /api/orders/:id/cancel", () => {
 
   it("should return 400 if completed", async () => {
     Order.findByPk.mockResolvedValue({
-      id: 1, userId: 1, status: "completed", OrderItems: [], update: jest.fn(),
+      id: 1,
+      userId: 1,
+      status: "completed",
+      OrderItems: [],
+      update: jest.fn(),
     });
     const res = await request(app).patch("/api/orders/1/cancel");
     expect(res.statusCode).toBe(400);
@@ -1306,7 +1379,11 @@ describe("PATCH /api/orders/:id/cancel", () => {
 
   it("should return 400 if already cancelled", async () => {
     Order.findByPk.mockResolvedValue({
-      id: 1, userId: 1, status: "cancelled", OrderItems: [], update: jest.fn(),
+      id: 1,
+      userId: 1,
+      status: "cancelled",
+      OrderItems: [],
+      update: jest.fn(),
     });
     const res = await request(app).patch("/api/orders/1/cancel");
     expect(res.statusCode).toBe(400);
@@ -1315,7 +1392,11 @@ describe("PATCH /api/orders/:id/cancel", () => {
 
   it("should return 403 if not owner", async () => {
     Order.findByPk.mockResolvedValue({
-      id: 1, userId: 99, status: "pending", OrderItems: [], update: jest.fn(),
+      id: 1,
+      userId: 99,
+      status: "pending",
+      OrderItems: [],
+      update: jest.fn(),
     });
     const res = await request(app).patch("/api/orders/1/cancel");
     expect(res.statusCode).toBe(403);
@@ -1364,9 +1445,7 @@ describe("POST /api/products/:id/reviews", () => {
     Order.findOne.mockResolvedValue(null);
     const res = await request(app).post("/api/products/1/reviews").send({ rating: 5 });
     expect(res.statusCode).toBe(403);
-    expect(res.body.message).toBe(
-      "Bạn cần mua và nhận hàng thành công mới được đánh giá!"
-    );
+    expect(res.body.message).toBe("Bạn cần mua và nhận hàng thành công mới được đánh giá!");
   });
 
   it("should return 400 if already reviewed", async () => {
@@ -1395,7 +1474,9 @@ describe("DELETE /api/products/:id/reviews/:reviewId", () => {
 
   it("should delete review successfully", async () => {
     Review.findByPk.mockResolvedValue({
-      id: 1, userId: 1, productId: 1,
+      id: 1,
+      userId: 1,
+      productId: 1,
       destroy: jest.fn().mockResolvedValue(true),
     });
     Review.findOne.mockResolvedValue({ avgRating: 0, totalReviews: 0 });

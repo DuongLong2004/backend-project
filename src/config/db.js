@@ -23,6 +23,7 @@ const commonOptions = {
   dialect: "mysql",
 
   // Tắt log SQL trong production, bật trong development
+  // eslint-disable-next-line no-console
   logging: process.env.NODE_ENV === "development" ? console.log : false,
 
   // Timezone Việt Nam — quan trọng khi server deploy ở region nước ngoài (Railway)
@@ -34,10 +35,10 @@ const commonOptions = {
    * + migration → để max=5 an toàn, tránh "Too many connections".
    */
   pool: {
-    max:     5,
-    min:     0,
+    max: 5,
+    min: 0,
     acquire: 30000,
-    idle:    10000,
+    idle: 10000,
   },
 
   // Tự động retry khi mất kết nối
@@ -58,16 +59,11 @@ if (databaseUrl) {
   /*
    * Mode 2: Local development — parse từng env riêng.
    */
-  sequelize = new Sequelize(
-    process.env.DB_NAME,
-    process.env.DB_USER,
-    process.env.DB_PASSWORD,
-    {
-      host: process.env.DB_HOST,
-      port: process.env.DB_PORT || 3306,
-      ...commonOptions,
-    }
-  );
+  sequelize = new Sequelize(process.env.DB_NAME, process.env.DB_USER, process.env.DB_PASSWORD, {
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT || 3306,
+    ...commonOptions,
+  });
 }
 
 module.exports = sequelize;

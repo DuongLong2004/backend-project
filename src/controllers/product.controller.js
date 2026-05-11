@@ -1,5 +1,5 @@
-const productService   = require("../services/product.service");
-const catchAsync       = require("../utils/catchAsync");
+const productService = require("../services/product.service");
+const catchAsync = require("../utils/catchAsync");
 const { sendResponse } = require("../utils/response");
 
 // GET /api/products

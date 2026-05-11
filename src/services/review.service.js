@@ -1,7 +1,7 @@
-const { Op }    = require("sequelize");
+const { Op } = require("sequelize");
 const sequelize = require("../config/db");
 const { Review, Order, OrderItem, User, Product } = require("../models/index");
-const AppError  = require("../utils/AppError");
+const AppError = require("../utils/AppError");
 
 const { MAX_PAGE_LIMIT } = require("../config/constants");
 
@@ -14,25 +14,18 @@ const parseCursor = (cursor) => {
 const syncProductRating = async (productId) => {
   try {
     const result = await Review.findOne({
-      where:      { productId },
+      where: { productId },
       attributes: [
         [sequelize.fn("AVG", sequelize.col("rating")), "avgRating"],
-        [sequelize.fn("COUNT", sequelize.col("id")),   "totalReviews"],
+        [sequelize.fn("COUNT", sequelize.col("id")), "totalReviews"],
       ],
       raw: true,
     });
 
-    const avg   = result?.avgRating
-      ? parseFloat(parseFloat(result.avgRating).toFixed(1))
-      : 0;
-    const total = result?.totalReviews
-      ? parseInt(result.totalReviews)
-      : 0;
+    const avg = result?.avgRating ? parseFloat(parseFloat(result.avgRating).toFixed(1)) : 0;
+    const total = result?.totalReviews ? parseInt(result.totalReviews) : 0;
 
-    await Product.update(
-      { avgRating: avg, totalReviews: total },
-      { where: { id: productId } }
-    );
+    await Product.update({ avgRating: avg, totalReviews: total }, { where: { id: productId } });
   } catch (err) {
     // Log nhưng không throw — rating desync không nên làm fail request chính
     const logger = require("../utils/logger");
@@ -51,15 +44,13 @@ exports.getReviews = async ({ productId, limit = 10, cursor = null }) => {
   const rows = await Review.findAll({
     where,
     include: [{ model: User, attributes: ["id", "name"] }],
-    order:   [["createdAt", "DESC"]],
-    limit:   safeLimit + 1,
+    order: [["createdAt", "DESC"]],
+    limit: safeLimit + 1,
   });
 
-  const hasMore    = rows.length > safeLimit;
-  const reviews    = hasMore ? rows.slice(0, -1) : rows;
-  const nextCursor = hasMore
-    ? reviews[reviews.length - 1].createdAt.getTime().toString()
-    : null;
+  const hasMore = rows.length > safeLimit;
+  const reviews = hasMore ? rows.slice(0, -1) : rows;
+  const nextCursor = hasMore ? reviews[reviews.length - 1].createdAt.getTime().toString() : null;
 
   const product = await Product.findByPk(productId, {
     attributes: ["avgRating", "totalReviews"],
@@ -67,7 +58,7 @@ exports.getReviews = async ({ productId, limit = 10, cursor = null }) => {
 
   return {
     reviews,
-    avgRating:    product?.avgRating    || 0,
+    avgRating: product?.avgRating || 0,
     totalReviews: product?.totalReviews || 0,
     hasMore,
     nextCursor,
@@ -80,21 +71,18 @@ exports.createReview = async ({ userId, productId, rating, comment }) => {
   }
 
   const hasPurchased = await Order.findOne({
-    where:   { userId, status: "completed" },
+    where: { userId, status: "completed" },
     include: [
       {
-        model:    OrderItem,
-        where:    { productId },
+        model: OrderItem,
+        where: { productId },
         required: true,
       },
     ],
   });
 
   if (!hasPurchased) {
-    throw new AppError(
-      "Bạn cần mua và nhận hàng thành công mới được đánh giá!",
-      403
-    );
+    throw new AppError("Bạn cần mua và nhận hàng thành công mới được đánh giá!", 403);
   }
 
   const existing = await Review.findOne({ where: { userId, productId } });
@@ -135,13 +123,13 @@ exports.replyReview = async ({ reviewId, reply, requestUser }) => {
   if (!review) throw new AppError("Review không tồn tại", 404);
 
   await review.update({
-    reply:   reply.trim(),
+    reply: reply.trim(),
     replyAt: new Date(),
   });
 
   return {
-    id:      review.id,
-    reply:   review.reply,
+    id: review.id,
+    reply: review.reply,
     replyAt: review.replyAt,
   };
 };

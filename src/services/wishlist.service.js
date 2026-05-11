@@ -7,13 +7,24 @@ const AppError = require("../utils/AppError");
 // ─────────────────────────────────────────────
 exports.getWishlist = async (userId) => {
   return Wishlist.findAll({
-    where:   { userId },
+    where: { userId },
     include: [
       {
-        model:      Product,
+        model: Product,
         attributes: [
-          "id", "title", "img", "price", "oldPrice", "discount",
-          "brand", "nation", "display", "ram", "rom", "stock", "sold",
+          "id",
+          "title",
+          "img",
+          "price",
+          "oldPrice",
+          "discount",
+          "brand",
+          "nation",
+          "display",
+          "ram",
+          "rom",
+          "stock",
+          "sold",
         ],
       },
     ],
@@ -28,7 +39,7 @@ exports.getWishlist = async (userId) => {
 // ─────────────────────────────────────────────
 exports.getWishlistIds = async (userId) => {
   const items = await Wishlist.findAll({
-    where:      { userId },
+    where: { userId },
     attributes: ["productId"],
   });
   return items.map((i) => i.productId);

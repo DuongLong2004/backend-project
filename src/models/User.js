@@ -1,5 +1,5 @@
 const { DataTypes } = require("sequelize");
-const sequelize     = require("../config/db");
+const sequelize = require("../config/db");
 
 /**
  * User model — đại diện cho bảng users trong DB.
@@ -14,39 +14,39 @@ const User = sequelize.define(
   "User",
   {
     id: {
-      type:          DataTypes.INTEGER,
+      type: DataTypes.INTEGER,
       autoIncrement: true,
-      primaryKey:    true,
+      primaryKey: true,
     },
     name: {
-      type:      DataTypes.STRING,
+      type: DataTypes.STRING,
       allowNull: false,
-      validate:  { notEmpty: true },
+      validate: { notEmpty: true },
     },
     email: {
-      type:      DataTypes.STRING,
+      type: DataTypes.STRING,
       allowNull: false,
-      unique:    true,
-      validate:  { isEmail: true },
+      unique: true,
+      validate: { isEmail: true },
     },
     password: {
-      type:      DataTypes.STRING,
+      type: DataTypes.STRING,
       // Phần 6: cho phép NULL — Google-only user không có password
       allowNull: true,
     },
     age: {
-      type:      DataTypes.INTEGER,
+      type: DataTypes.INTEGER,
       allowNull: true,
-      validate:  { min: 0 },
+      validate: { min: 0 },
     },
     role: {
-      type:         DataTypes.STRING,
-      allowNull:    false,
+      type: DataTypes.STRING,
+      allowNull: false,
       defaultValue: "user",
     },
     avatar: {
-      type:         DataTypes.STRING,
-      allowNull:    true,
+      type: DataTypes.STRING,
+      allowNull: true,
       defaultValue: null,
     },
 
@@ -58,8 +58,8 @@ const User = sequelize.define(
      * - true:  Đã verify thành công, được phép login
      */
     isVerified: {
-      type:         DataTypes.BOOLEAN,
-      allowNull:    false,
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
       defaultValue: false,
     },
 
@@ -68,8 +68,8 @@ const User = sequelize.define(
      * Set NULL sau khi verify thành công để không reuse được.
      */
     verificationToken: {
-      type:         DataTypes.STRING(64),
-      allowNull:    true,
+      type: DataTypes.STRING(64),
+      allowNull: true,
       defaultValue: null,
     },
 
@@ -77,8 +77,8 @@ const User = sequelize.define(
      * Thời điểm verification token hết hạn (24h kể từ lúc tạo).
      */
     verificationTokenExpiresAt: {
-      type:         DataTypes.DATE,
-      allowNull:    true,
+      type: DataTypes.DATE,
+      allowNull: true,
       defaultValue: null,
     },
 
@@ -89,8 +89,8 @@ const User = sequelize.define(
      * Set NULL sau khi reset thành công để không reuse được.
      */
     passwordResetToken: {
-      type:         DataTypes.STRING(64),
-      allowNull:    true,
+      type: DataTypes.STRING(64),
+      allowNull: true,
       defaultValue: null,
     },
 
@@ -99,8 +99,8 @@ const User = sequelize.define(
      * Sensitive hơn verify nên expire nhanh hơn.
      */
     passwordResetExpiresAt: {
-      type:         DataTypes.DATE,
-      allowNull:    true,
+      type: DataTypes.DATE,
+      allowNull: true,
       defaultValue: null,
     },
 
@@ -119,9 +119,9 @@ const User = sequelize.define(
      *           có thể thay đổi, còn sub là vĩnh viễn theo Google.
      */
     googleId: {
-      type:         DataTypes.STRING,
-      allowNull:    true,
-      unique:       true,
+      type: DataTypes.STRING,
+      allowNull: true,
+      unique: true,
       defaultValue: null,
     },
 
@@ -133,8 +133,8 @@ const User = sequelize.define(
      * - Đạt MAX_LOGIN_ATTEMPTS (5) → tài khoản bị lock
      */
     failedLoginAttempts: {
-      type:         DataTypes.INTEGER,
-      allowNull:    false,
+      type: DataTypes.INTEGER,
+      allowNull: false,
       defaultValue: 0,
     },
 
@@ -145,24 +145,24 @@ const User = sequelize.define(
      * - Date trong quá khứ: Đã hết khoá (không cần clear, login thành công sẽ reset)
      */
     lockedUntil: {
-      type:         DataTypes.DATE,
-      allowNull:    true,
+      type: DataTypes.DATE,
+      allowNull: true,
       defaultValue: null,
     },
   },
   {
-    tableName:  "users",
+    tableName: "users",
     timestamps: true,
     indexes: [
       { fields: ["role"], name: "idx_users_role" },
       // Index verificationToken (Phần 2) để verify endpoint query nhanh
-      { fields: ["verificationToken"],   name: "idx_users_verification_token" },
+      { fields: ["verificationToken"], name: "idx_users_verification_token" },
       // Index passwordResetToken (Phần 3) để reset endpoint query nhanh
-      { fields: ["passwordResetToken"],  name: "idx_users_password_reset_token" },
+      { fields: ["passwordResetToken"], name: "idx_users_password_reset_token" },
       // Index googleId (Phần 6) để Google login query nhanh
-      { fields: ["googleId"],            name: "idx_users_googleId" },
+      { fields: ["googleId"], name: "idx_users_googleId" },
       // Index lockedUntil (Phần 8) để query account locked nhanh
-      { fields: ["lockedUntil"],         name: "idx_users_locked_until" },
+      { fields: ["lockedUntil"], name: "idx_users_locked_until" },
     ],
   }
 );

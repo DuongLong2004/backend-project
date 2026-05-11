@@ -128,14 +128,7 @@ const scanKeys = async (pattern, count = 100) => {
  *
  * @design TTL = 7 ngày trùng với refreshToken expiry → key tự xóa khi token hết hạn.
  */
-const createSession = async ({
-  userId,
-  deviceId,
-  refreshToken,
-  deviceName,
-  userAgent,
-  ip,
-}) => {
+const createSession = async ({ userId, deviceId, refreshToken, deviceName, userAgent, ip }) => {
   const now = new Date().toISOString();
   const data = {
     refreshToken,
@@ -195,17 +188,15 @@ const listSessions = async (userId) => {
       return {
         deviceId,
         deviceName: data.deviceName,
-        ip:         data.ip,
-        userAgent:  data.userAgent,
-        createdAt:  data.createdAt,
+        ip: data.ip,
+        userAgent: data.userAgent,
+        createdAt: data.createdAt,
         lastActive: data.lastActive,
       };
     })
   );
 
-  return sessions.filter(Boolean).sort((a, b) =>
-    new Date(b.lastActive) - new Date(a.lastActive)
-  );
+  return sessions.filter(Boolean).sort((a, b) => new Date(b.lastActive) - new Date(a.lastActive));
 };
 
 /**
