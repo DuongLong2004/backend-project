@@ -3,7 +3,6 @@ const express = require("express");
 const cors    = require("cors");
 const helmet  = require("helmet");
 const rateLimit = require("express-rate-limit");
-const { sequelize } = require("./models/index");
 
 const app = express();
 
@@ -105,23 +104,22 @@ const errorMiddleware = require("./middlewares/error.middleware");
 app.use(errorMiddleware);
 
 /*
- * Database sync — chỉ chạy ở development.
- * Production phải dùng migrations để tránh duplicate indexes.
+ * Schema được quản lý hoàn toàn qua Sequelize migrations:
+ *
+ *   - Tạo migration mới:
+ *       npx sequelize-cli migration:generate --name <description>
+ *
+ *   - Chạy migrations (local):
+ *       npx sequelize-cli db:migrate
+ *
+ *   - Rollback migration gần nhất:
+ *       npx sequelize-cli db:migrate:undo
+ *
+ *   - Chạy migrations production (Railway):
+ *       npx sequelize-cli db:migrate --env production
+ *
+ * KHÔNG dùng sequelize.sync() — chọn 1 nguồn quản lý schema duy nhất để
+ * tránh conflict (sync() có thể tạo column/index trùng với migrations).
  */
-const syncDB = async () => {
-  if (process.env.NODE_ENV === "production") {
-    console.log("-> Skip auto-sync in production. Use migrations instead.");
-    return;
-  }
-
-  try {
-    await sequelize.sync();
-    console.log("-> Database synced");
-  } catch (err) {
-    console.error("X DB sync error:", err);
-  }
-};
-
-syncDB();
 
 module.exports = app;
