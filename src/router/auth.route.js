@@ -26,6 +26,7 @@ const loginLimiter = isTest
   : rateLimit({
       windowMs: 15 * 60 * 1000,
       max: 5,
+      keyGenerator: (req) => req.socket.remoteAddress, 
       message: {
         status: "error",
         message: "Too many login attempts, please try again after 15 minutes",
@@ -102,6 +103,7 @@ const changePasswordLimiter = isTest
 
 router.post("/register", validate(registerSchema), authController.register);
 router.post("/login", loginLimiter, validate(loginSchema), authController.login);
+// router.post("/login", noopLimiter, validate(loginSchema), authController.login);
 router.post("/refresh", authController.refresh);
 router.post("/logout", authController.logout);
 
