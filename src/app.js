@@ -88,8 +88,13 @@ app.use("/api", uploadRoutes);
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/placements", placementRouter);
 
+
+
+
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
+
+app.get("/api-docs.json", (req, res) => res.json(swaggerSpec));
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.use((req, res) => {

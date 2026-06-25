@@ -275,6 +275,8 @@ exports.login = async ({ email, password, ip, userAgent }) => {
    * có thể phân biệt được user Google-only (không bao giờ bị lock) với
    * user thường (có thể bị lock).
    */
+
+  
   if (isAccountLocked(user)) {
     const minutesRemaining = Math.ceil((new Date(user.lockedUntil) - new Date()) / 60000);
     logger.warn(
@@ -357,7 +359,7 @@ exports.login = async ({ email, password, ip, userAgent }) => {
         );
       }
 
-      // Throw error 423 ngay (không cần đợi user thử lại)
+    //   // Throw error 423 ngay (không cần đợi user thử lại)
       const error = new AppError(
         `Bạn đã nhập sai mật khẩu ${MAX_LOGIN_ATTEMPTS} lần. Tài khoản tạm khoá ${Math.floor(LOCKOUT_DURATION_MS / 60000)} phút. Email cảnh báo đã được gửi đến ${user.email}.`,
         423
@@ -375,6 +377,7 @@ exports.login = async ({ email, password, ip, userAgent }) => {
     const error = new AppError("Invalid email or password", 401);
     error.attemptsRemaining = attemptsRemaining;
     throw error;
+    
   }
 
   /*

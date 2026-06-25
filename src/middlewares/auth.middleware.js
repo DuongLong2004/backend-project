@@ -1,9 +1,13 @@
+
+
+
 const jwt = require("jsonwebtoken");
 const AppError = require("../utils/AppError");
+const { client: redis } = require("../config/redis");
 
 // ✅ Dùng next(new AppError()) thay vì sendResponse trực tiếp
 // → nhất quán với toàn project, đi qua global error handler
-exports.verifyToken = (req, res, next) => {
+exports.verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -14,6 +18,16 @@ exports.verifyToken = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // ✅ FIX: Check session còn tồn tại trong Redis không
+    // Nếu đã logout → session bị xóa → token cũ không dùng được nữa
+    const sessionKey = `session:${decoded.id}:${decoded.deviceId}`;
+    const session = await redis.get(sessionKey);
+
+    if (!session) {
+      return next(new AppError("Session has been terminated", 401));
+    }
+
     req.user = decoded;
     next();
   } catch (err) {

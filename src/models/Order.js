@@ -21,7 +21,7 @@ const Order = sequelize.define(
       allowNull: false,
     },
 
-    // ✅ DECIMAL thay FLOAT — tránh lỗi làm tròn số tiền
+    //  DECIMAL thay FLOAT — tránh lỗi làm tròn số tiền
     totalAmount: {
       type: DataTypes.DECIMAL(10, 2),
       defaultValue: 0,
@@ -92,13 +92,13 @@ const Order = sequelize.define(
     tableName: "orders",
     timestamps: true,
     indexes: [
-      // ✅ Index userId — GET /api/orders/me query theo userId thường xuyên
+      // Index userId — GET /api/orders/me query theo userId thường xuyên
       { fields: ["userId"], name: "idx_orders_user_id" },
 
-      // ✅ Index status — filter đơn hàng theo trạng thái
+      // Index status — filter đơn hàng theo trạng thái
       { fields: ["status"], name: "idx_orders_status" },
 
-      // ✅ Composite — lấy đơn hàng của user theo status
+      // Composite — lấy đơn hàng của user theo status
       // Khi query: WHERE userId = 1 AND status = 'pending'
       { fields: ["userId", "status"], name: "idx_orders_user_status" },
     ],

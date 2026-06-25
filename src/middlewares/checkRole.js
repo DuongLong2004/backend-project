@@ -1,6 +1,8 @@
+
+
 const AppError = require("../utils/AppError");
 
-// ✅ Dùng next(new AppError()) — nhất quán với toàn project
+
 module.exports = (requiredRole) => {
   return (req, res, next) => {
     if (!req.user) {
